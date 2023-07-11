@@ -28,17 +28,26 @@ read_nhd <- function(feature, nhd_dir = "rawdata/geodata/NHD_H_17100104_HU8_Shap
     read_sf(path)
 }
 
-
-# read_dnr_hydro <- function(dnr_dir = "DNR_Hydrography_-_Water_Bodies") {
-#     read_sf(file.path(dnr_dir, "DNR_Hydrography_-_Water_Bodies_-_Forest_Practices_Regulation.shp"))
-# }
-# 
-# prep_geo <- function(geo_data, filter_poly = NULL) {
-#     updata <- st_zm(geo_data)
-#     if (!is.null(filter_poly)) {
-#         updata <- updata |>
-#             st_transform(st_crs(filter_poly)) |>
-#             st_filter(filter_poly, .predicate = st_within)
-#     }
-#     updata
-# }
+#' Function to iteratively add rows from `bigset` that intersect with `init`.
+#' Careful to remove e.g. some downstream segment if you don't want to add those
+#' as well.
+#'
+#' Iteratively select rows that intersect with existing rows.
+#'
+#' @param init spatial feather to build from
+#' @param bigset set of all spatial features to iteratively add to a spatial
+#'  data frame using \code{\link[sf]{st_intersect}}
+#'
+#' @return a data frame that includes all rows that intersect `init` directly or
+#'  indirectly.
+#' @export
+iter_intersect <- function(init, bigset) {
+  n_row <- c(0, 1)
+  sfdf <- init
+  while (diff(n_row) > 0) {
+    sfdf <- st_filter(bigset, sfdf, .predicate = st_intersects)
+    n_row[1] <- n_row[2]
+    n_row[2] <- nrow(sfdf)
+  }
+  sfdf
+}
