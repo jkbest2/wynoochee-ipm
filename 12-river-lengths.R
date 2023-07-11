@@ -132,5 +132,60 @@ ggplot() +
   geom_sf(data = wyn_res, color = "gray50", fill = "gray70") +
   geom_sf(data = hab_df_plot, aes(color = System),
           linewidth = 1) +
-  theme_bw()
-ggsave("figs/habitat_map.png", width = 10, height = 10)
+  theme_bw() +
+  theme(legend.position = c(0.85, 0.925))
+ggsave("figs/habitat_map.png", width = 9, height = 10)
+
+## -----------------------------------------------------------------------------
+## A simpler plot that only includes the major tributaries of the Wynoochee and 
+## Satsop Rivers, along with the specific habitat that we are considering.
+## Includes stream area upstream of potential habitat.
+## Get Wishkah Cr flowlines to filter out the "other" Big Creek
+wis_fl <- read_nhd("Flowline") |>
+  st_zm() |>
+  st_transform(crs) |>
+  filter(grepl("Wishkah", gnis_name)) |>
+  select() |>
+  st_union()
+
+## Get NHD Flowlines
+che_fl <- read_nhd("Flowline") |>
+  st_zm() |>
+  st_transform(crs) |>
+  filter(grepl("Chehalis River|Wynoochee|Big Creek|Satsop|Bingham", gnis_name),
+         ## This GNIS ID represents a separate Big Creek, which is a tributary
+         ## of the Wishkah River
+         gnis_id != "01516480") |>
+  select(gnis_id, gnis_name) |>
+  group_by(gnis_id, gnis_name) |>
+  summarize(geometry = st_union(geometry),
+            .groups = "drop")
+
+## Get waterbodies
+che_wb <- read_nhd("Waterbody") |>
+  st_zm() |>
+  st_transform(crs) |>
+  st_filter(che_fl, .predicate = st_intersects)
+
+che_area <- read_nhd("Area") |>
+  st_zm() |>
+  st_transform(crs) |>
+  st_filter(che_fl, .predicate = st_intersects)
+
+che_nhd <- rbind(select(che_fl),
+                 select(che_wb),
+                 select(che_area))
+
+che_bbox <- st_bbox(che_fl)
+hab_df_plot <- hab_df |>
+  mutate(habkm = paste(signif(habitat, 3), "km"),
+         System = paste(name, habkm, sep = ": "))
+ggplot() +
+  geom_sf(data = che_nhd, color = "gray70") +
+  # geom_sf(data = wyn_res, color = "gray50", fill = "gray70") +
+  geom_sf(data = hab_df_plot, aes(color = System),
+          linewidth = 1) +
+  coord_sf(xlim = che_bbox[c(1, 3)], che_bbox[c(2, 4)]) +
+  theme_bw() +
+  theme(legend.position = c(0.2, 0.925))
+ggsave("figs/habitat_map2.png", width = 8, height = 10)
