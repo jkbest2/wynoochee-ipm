@@ -37,6 +37,16 @@ bing_coho_smolt_spawner |>
   geom_point() +
   geom_line()
 
+bing_harvest <- read_excel("rawdata/Chehalis & Bingham longterm data COPY.xlsx",
+                           sheet = "Bingham Marine Survival",
+                           range = "A11:Q53") |>
+  set_names("brood_year", "return_year", "tag_code", "n_tagged", "adj_released",
+            "tagged_catch_ocean", "tagged_catch_harbor", "tagged_catch_sport",
+            "tagged_catch_total", "tagged_return", "total_run",
+            "ocean_survival", "harvest_ocean", "harvest_harbor", "harvest_total",
+            "escapement_rate", "survival_escapement")
+write_rds(bing_harvest, "data/bing_harvest.rds")
+
 fix_wyn_trap_year <- function(year) {
   ## Split out the first of the two years in the season
   if (year == 1970) {
@@ -75,4 +85,5 @@ write_rds(wyn_trap, "data/wyn_trap.rds")
 ggplot(wyn_trap, aes(x = year, y = count, color = species, shape = type)) +
   geom_point() +
   facet_wrap(~ species, ncol = 1, scales = "free_y") +
-  scale_y_continuous(limits = c(0, NA), expand = c(0, 0, 0.1, 0))
+  scale_y_continuous(limits = c(0, NA), expand = c(0, 0, 0.1, 0)) +
+  labs(x = "Year", y = NULL, title = "Wynoochee trap counts")
