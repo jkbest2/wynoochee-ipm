@@ -11,7 +11,7 @@ bing_coho_up <- read_xlsx("rawdata/2000-2019 Upstream CohoBingham.xlsx",
                      # n_max = 20, # Skip the summary rows at the end
                      .name_repair = ~ str_split_i(tolower(.), pattern = "s ", i = 1)) |>
   pivot_longer(-year, names_to = "type", values_to = "count") |>
-  mutate(year = factor(year),
+  mutate(#year = factor(year),
          type = factor(type, levels = c("female", "male", "jack")))
 write_rds(bing_coho_up, "data/bing_coho_up.rds")
 
