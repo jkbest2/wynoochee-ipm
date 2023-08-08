@@ -1,0 +1,148 @@
+library(salmonIPM)
+options(mc.cores = parallel::detectCores(logical = FALSE))
+rstan_options(auto_write = TRUE)
+library(tidyverse)
+
+bing <- read_rds("data/bing_coho_up.rds") |>
+  mutate(sex = ifelse(type == "female", "female", "male"),
+         age = ifelse(type == "jack", 2, 3)) |>
+  select(-type) |>
+  pivot_wider(id_cols = year,
+              names_from = c(sex, age),
+              values_from = count) |>
+  mutate(age_2 = male_2,
+         age_3 = female_3 + male_3,
+         total = male_2 + male_3 + female_3)
+
+bing_harvest <- read_rds("data/bing_harvest.rds") |>
+  select(year = return_year,
+         survival_escapement, # Overall smolt -> adult survival
+         harvest_total)
+
+## bing_osurv <- bing_harvest |>
+##   mutate(smolt_year = year - 3) |>
+##   select(smolt_year, ocean_survival)
+
+bing_harvest2 <- read_rds("data/bing_harvest.rds")
+
+## bing_df <- bing |>
+##   left_join(bing_harvest, by = join_by(year)) |>
+##   mutate(pop = factor("Bingham Creek"),
+##          year = as.integer(as.character(year)),
+##          A = 40,
+##          n_W_obs = 0,
+##          n_H_obs = 0,
+##          fit_p_HOS = FALSE,
+##          B_take_obs = 0,
+##          ) |>
+##   select(pop,
+##          year,
+##          A,
+##          S_obs = total,
+##          n_age2_obs = age_2,
+##          n_age3_obs = age_3,
+##          n_W_obs,
+##          n_H_obs,
+##          fit_p_HOS,
+##          F_rate = harvest_total,
+##          B_take_obs
+## )
+
+dam_survival <- 1
+age_obs_factor <- 10
+
+wyn <- read_rds("data/wyn_trap.rds") |>
+  filter(species == "coho") |>
+  left_join(bing_harvest, by = join_by(year)) |>
+  filter(!is.na(harvest_total)) |>
+  mutate(pop = "Upper Wynoochee",
+         A = 10,
+         # n_age2_obs = 0.1,
+         # n_age3_obs = 0.48,
+         S_obs = count,
+         n_W_obs = 0,
+         n_H_obs = 0,
+         fit_p_HOS = FALSE,
+         B_take_obs = 0) |>
+  left_join(select(bing, year, age_2, age_3), by = join_by(year)) |>
+  ## Find age structure
+  mutate(n_age2_obs = age_2 / age_obs_factor,
+         n_age2_obs = replace_na(n_age2_obs, 0),
+         n_age3_obs = age_3 / age_obs_factor,
+         n_age3_obs = replace_na(n_age3_obs, 0),
+         frac_jack = age_2 / (age_2 + age_3),
+         frac_jack = replace_na(frac_jack,
+                                sum(age_2, na.rm = TRUE) / sum(age_2 + age_3, na.rm = TRUE))) |>
+  ## Back-calculate the number of smolts we would have seen if we were looking
+  mutate(jack_smolts = lead(S_obs, 2) * lead(frac_jack, 2) / lead(survival_escapement, 2),
+         mature_smolts = lead(S_obs, 3) * (1 - lead(frac_jack, 3)) / lead(survival_escapement, 3),
+         M_obs = (jack_smolts + mature_smolts) / dam_survival) |>
+  select(pop,
+         year,
+         A,
+         M_obs,
+         S_obs,
+         n_age2_obs,
+         n_age3_obs,
+         n_W_obs,
+         n_H_obs,
+         fit_p_HOS,
+         F_rate = harvest_total,
+         B_take_obs)
+
+stopifnot(all(wyn$F_rate >= 0,
+              wyn$F_rate < 1))
+
+
+bh_lik <- function(pars, data) {
+  m_hat <- SR(SR_fun = "BH",
+              alpha = exp(pars[1]),
+              Rmax = exp(pars[2]),
+              S = data$S_obs,
+              A = 1,
+              R_per_S = FALSE)
+  -sum(dlnorm(data$M_obs, log(m_hat), sdlog = exp(pars[3]), log = TRUE))
+}
+
+wyn_comp <- wyn |>
+  select(year, M_obs, S_obs) |>
+  filter(!is.na(M_obs),
+         !is.na(S_obs))
+
+pars <- c(log_alpha = log(1), log_Rmax = log(20000), log_sd = log(1))
+bh_lik(pars = pars, data = wyn_comp)
+opt <- optim(pars, bh_lik, data = wyn_comp)
+
+bh_df <- tibble(S = seq(0, 5500, 25)) |>
+  mutate(M_hat = SR(alpha = exp(opt$par[1]), Rmax = exp(opt$par[2]), S = S),
+         M10 = qlnorm(0.1, log(M_hat), exp(opt$par[3])),
+         M90 = qlnorm(0.9, log(M_hat), exp(opt$par[3])))
+
+ggplot() +
+  geom_ribbon(data = bh_df,
+             aes(x = S, ymin = M10, ymax = M90),
+             alpha = 0.3) +
+  geom_line(data = bh_df,
+            aes(x = S, y = M_hat)) +
+  geom_point(data = wyn_comp,
+             aes(x = S_obs, y = M_obs))
+
+
+## Fit the model ---------------------------------------------------------------
+wyn_fit <- salmonIPM(
+  model = "IPM", life_cycle = "SMS", pool_pops = FALSE,
+  SR_fun = "BH",
+  ages = list(M = 1),
+  center = FALSE, scale = FALSE,
+  fish_data = wyn,
+  age_F = c(1, 1),
+  age_B = c(0, 0),
+  # age_S_obs = c(FALSE, TRUE),
+  # age_S_eff = c(FALSE, TRUE),
+  prior = list(mu_p ~ dirichlet(c(1, 9))),
+  chains = 1, iter = 2000,
+  control = list(adapt_delta = 0.95,
+                 metric = "diag_e"))
+save_rds(wyn_fit, "data/wyn_fit.rds")
+
+wyn_fit
