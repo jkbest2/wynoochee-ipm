@@ -1,6 +1,6 @@
 library(salmonIPM)
-options(mc.cores = parallel::detectCores(logical = FALSE))
-rstan_options(auto_write = TRUE)
+## options(mc.cores = parallel::detectCores(logical = FALSE))
+## rstan_options(auto_write = TRUE)
 library(tidyverse)
 
 bing <- read_rds("data/bing_coho_up.rds") |>
@@ -48,8 +48,10 @@ bing_harvest2 <- read_rds("data/bing_harvest.rds")
 ##          B_take_obs
 ## )
 
-dam_survival <- 1
+ds <- seq(0.2, 1, by = 0.2)
 age_obs_factor <- 10
+
+dfs <- lapply(ds, \(dam_survival) {
 
 wyn <- read_rds("data/wyn_trap.rds") |>
   filter(species == "coho") |>
@@ -90,8 +92,9 @@ wyn <- read_rds("data/wyn_trap.rds") |>
          F_rate = harvest_total,
          B_take_obs)
 
-stopifnot(all(wyn$F_rate >= 0,
-              wyn$F_rate < 1))
+## stopifnot(all(wyn$F_rate >= 0,
+##               wyn$F_rate < 1))
+})
 
 
 bh_lik <- function(pars, data) {
@@ -104,28 +107,63 @@ bh_lik <- function(pars, data) {
   -sum(dlnorm(data$M_obs, log(m_hat), sdlog = exp(pars[3]), log = TRUE))
 }
 
+opts <- lapply(dfs, \(wyn) {
 wyn_comp <- wyn |>
   select(year, M_obs, S_obs) |>
   filter(!is.na(M_obs),
          !is.na(S_obs))
 
-pars <- c(log_alpha = log(1), log_Rmax = log(20000), log_sd = log(1))
+pars <- c(log_alpha = log(200),
+          log_Rmax = log(25000 / dam_survival),
+          log_sd = log(1))
 bh_lik(pars = pars, data = wyn_comp)
 opt <- optim(pars, bh_lik, data = wyn_comp)
+opt
+})
 
-bh_df <- tibble(S = seq(0, 5500, 25)) |>
-  mutate(M_hat = SR(alpha = exp(opt$par[1]), Rmax = exp(opt$par[2]), S = S),
-         M10 = qlnorm(0.1, log(M_hat), exp(opt$par[3])),
-         M90 = qlnorm(0.9, log(M_hat), exp(opt$par[3])))
+plts <- lapply(seq_along(ds), \(idx) {
 
-ggplot() +
-  geom_ribbon(data = bh_df,
-             aes(x = S, ymin = M10, ymax = M90),
-             alpha = 0.3) +
-  geom_line(data = bh_df,
-            aes(x = S, y = M_hat)) +
-  geom_point(data = wyn_comp,
-             aes(x = S_obs, y = M_obs))
+  opt <- opts[[idx]]
+  wyn_comp <- dfs[[idx]] |>
+    select(year, M_obs, S_obs) |>
+    filter(!is.na(M_obs),
+           !is.na(S_obs))
+
+  bh_df <- tibble(S = seq(0, 5500, 25)) |>
+    mutate(M_hat = SR(alpha = exp(opt$par[1]), Rmax = exp(opt$par[2]), S = S),
+           M10 = qlnorm(0.1, log(M_hat), exp(opt$par[3])),
+           M90 = qlnorm(0.9, log(M_hat), exp(opt$par[3])))
+
+  ggplot() +
+    geom_ribbon(data = bh_df,
+                aes(x = S, ymin = M10, ymax = M90),
+                alpha = 0.3) +
+    geom_line(data = bh_df,
+              aes(x = S, y = M_hat)) +
+    geom_point(data = wyn_comp,
+               aes(x = S_obs, y = M_obs, color = year)) +
+    geom_path(data = wyn_comp,
+              aes(x = S_obs, y = M_obs, color = year),
+              alpha = 0.3) +
+    geom_label(data = filter(wyn_comp, year %% 5 == 0),
+               aes(x = S_obs, y = M_obs, label = year),
+               nudge_x = 100) +
+    coord_cartesian(xlim = c(0, NA),
+                    ## Ensure that the label and point aren't *right* at the edge
+                    ylim = c(0, 1.02 * max(wyn_comp$M_obs)),
+                    expand = FALSE) +
+    labs(x = "Spawners", y = "Smolts", color = "Year")
+})
+
+pars <- lapply(seq_along(ds), \(idx) {
+  opt <- opts[[idx]]
+  p <- c(dam_survival = ds[idx],
+         alpha = exp(opt$par[1]),
+         Rmax = exp(opt$par[2]),
+         sdlog = exp(opt$par[3]))
+  names(p) <- c("dam_survival", "alpha", "Rmax", "sdlog")
+  p
+})
 
 
 ## Fit the model ---------------------------------------------------------------
@@ -140,9 +178,9 @@ wyn_fit <- salmonIPM(
   # age_S_obs = c(FALSE, TRUE),
   # age_S_eff = c(FALSE, TRUE),
   prior = list(mu_p ~ dirichlet(c(1, 9))),
-  chains = 1, iter = 2000,
+  chains = 0, iter = 2000,
   control = list(adapt_delta = 0.95,
                  metric = "diag_e"))
-save_rds(wyn_fit, "data/wyn_fit.rds")
+## save_rds(wyn_fit, "data/wyn_fit.rds")
 
 wyn_fit
