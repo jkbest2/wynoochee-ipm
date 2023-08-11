@@ -1,7 +1,8 @@
 library(salmonIPM)
-## options(mc.cores = parallel::detectCores(logical = FALSE))
-## rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores(logical = FALSE))
+rstan_options(auto_write = TRUE)
 library(tidyverse)
+library(posterior)
 
 bing <- read_rds("data/bing_coho_up.rds") |>
   mutate(sex = ifelse(type == "female", "female", "male"),
@@ -19,168 +20,149 @@ bing_harvest <- read_rds("data/bing_harvest.rds") |>
          survival_escapement, # Overall smolt -> adult survival
          harvest_total)
 
-## bing_osurv <- bing_harvest |>
-##   mutate(smolt_year = year - 3) |>
-##   select(smolt_year, ocean_survival)
-
-bing_harvest2 <- read_rds("data/bing_harvest.rds")
-
-## bing_df <- bing |>
-##   left_join(bing_harvest, by = join_by(year)) |>
-##   mutate(pop = factor("Bingham Creek"),
-##          year = as.integer(as.character(year)),
-##          A = 40,
-##          n_W_obs = 0,
-##          n_H_obs = 0,
-##          fit_p_HOS = FALSE,
-##          B_take_obs = 0,
-##          ) |>
-##   select(pop,
-##          year,
-##          A,
-##          S_obs = total,
-##          n_age2_obs = age_2,
-##          n_age3_obs = age_3,
-##          n_W_obs,
-##          n_H_obs,
-##          fit_p_HOS,
-##          F_rate = harvest_total,
-##          B_take_obs
-## )
-
+## These are the values of dam survival that we are using to inflate the smolt
+## counts.
 ds <- seq(0.2, 1, by = 0.2)
+
+## Currently need at least two age classes, so using the information from
+## Bingham on age class observations to inform. We don't want *all* the
+## information, so we're reducing the sample size by a factor of
+## `age_obs_factor`. This means that if in a given year 10 jacks and 90 mature
+## fish were observed and `age_obs_factor` is 10, then we will tell the model
+## that 1 jack and 9 mature fish were observed at Wynoochee. This is also
+## informed by the prior set on the age distribution, which is currently mildly
+## informative as a Dirichlet(2, 18).
 age_obs_factor <- 10
 
+## Generate the data frames assuming different levels of smolt survival during
+## downstream dam passage
 dfs <- lapply(ds, \(dam_survival) {
+  wyn <- read_rds("data/wyn_trap.rds") |>
+    filter(species == "coho") |>
+    left_join(bing_harvest, by = join_by(year)) |>
+    filter(!is.na(harvest_total)) |>
+    mutate(pop = "Upper Wynoochee",
+           A = 10,
+           ## n_age2_obs = 0.1,
+           ## n_age3_obs = 0.48,
+           S_obs = count,
+           n_W_obs = 0,
+           n_H_obs = 0,
+           fit_p_HOS = FALSE,
+           B_take_obs = 0) |>
+    left_join(select(bing, year, age_2, age_3), by = join_by(year)) |>
+    ## Find age structure
+    mutate(n_age2_obs = age_2 / age_obs_factor,
+           n_age2_obs = replace_na(n_age2_obs, 0),
+           n_age3_obs = age_3 / age_obs_factor,
+           n_age3_obs = replace_na(n_age3_obs, 0),
+           frac_jack = age_2 / (age_2 + age_3),
+           ## Fill in the fraction of jacks using the overall mean. This allows
+           ## us to fill in many more years of data.
+           frac_jack = replace_na(
+             frac_jack,
+             sum(age_2, na.rm = TRUE) / sum(age_2 + age_3, na.rm = TRUE))) |>
+    ## Back-calculate the number of smolts we would have seen (if we were
+    ## looking). This treats the overall smolt-to-adult survival as known, based
+    ## on the Bingham data. It also assumes that jacks share the same mortality
+    ## rate *as the mature fish they return with*.
+    mutate(
+      jack_smolts = lead(S_obs, 2) * lead(frac_jack, 2) /
+        lead(survival_escapement, 2),
+      mature_smolts = lead(S_obs, 3) * (1 - lead(frac_jack, 3)) /
+        lead(survival_escapement, 3),
+      M_obs = (jack_smolts + mature_smolts) / dam_survival) |>
+    select(pop,
+           year,
+           A,
+           M_obs,
+           S_obs,
+           n_age2_obs,
+           n_age3_obs,
+           n_W_obs,
+           n_H_obs,
+           fit_p_HOS,
+           F_rate = harvest_total,
+           B_take_obs)
 
-wyn <- read_rds("data/wyn_trap.rds") |>
-  filter(species == "coho") |>
-  left_join(bing_harvest, by = join_by(year)) |>
-  filter(!is.na(harvest_total)) |>
-  mutate(pop = "Upper Wynoochee",
-         A = 10,
-         # n_age2_obs = 0.1,
-         # n_age3_obs = 0.48,
-         S_obs = count,
-         n_W_obs = 0,
-         n_H_obs = 0,
-         fit_p_HOS = FALSE,
-         B_take_obs = 0) |>
-  left_join(select(bing, year, age_2, age_3), by = join_by(year)) |>
-  ## Find age structure
-  mutate(n_age2_obs = age_2 / age_obs_factor,
-         n_age2_obs = replace_na(n_age2_obs, 0),
-         n_age3_obs = age_3 / age_obs_factor,
-         n_age3_obs = replace_na(n_age3_obs, 0),
-         frac_jack = age_2 / (age_2 + age_3),
-         frac_jack = replace_na(frac_jack,
-                                sum(age_2, na.rm = TRUE) / sum(age_2 + age_3, na.rm = TRUE))) |>
-  ## Back-calculate the number of smolts we would have seen if we were looking
-  mutate(jack_smolts = lead(S_obs, 2) * lead(frac_jack, 2) / lead(survival_escapement, 2),
-         mature_smolts = lead(S_obs, 3) * (1 - lead(frac_jack, 3)) / lead(survival_escapement, 3),
-         M_obs = (jack_smolts + mature_smolts) / dam_survival) |>
-  select(pop,
-         year,
-         A,
-         M_obs,
-         S_obs,
-         n_age2_obs,
-         n_age3_obs,
-         n_W_obs,
-         n_H_obs,
-         fit_p_HOS,
-         F_rate = harvest_total,
-         B_take_obs)
+  ## Check that fishing rates are between 0 and 1.
+  ## FIXME Are the more checks that can be done here?
+  stopifnot(all(wyn$F_rate >= 0,
+                wyn$F_rate < 1))
 
-## stopifnot(all(wyn$F_rate >= 0,
-##               wyn$F_rate < 1))
+  wyn
 })
 
+walk(seq_along(ds), \(idx) {
+  ## Create the directory to save results if necessary
+  data_dir <- paste0("data/ds", format(100 * ds[idx], trim = TRUE, digits = 2))
+  if (!dir.exists(data_dir)) dir.create(data_dir)
 
-bh_lik <- function(pars, data) {
-  m_hat <- SR(SR_fun = "BH",
-              alpha = exp(pars[1]),
-              Rmax = exp(pars[2]),
-              S = data$S_obs,
-              A = 1,
-              R_per_S = FALSE)
-  -sum(dlnorm(data$M_obs, log(m_hat), sdlog = exp(pars[3]), log = TRUE))
-}
-
-opts <- lapply(dfs, \(wyn) {
-wyn_comp <- wyn |>
-  select(year, M_obs, S_obs) |>
-  filter(!is.na(M_obs),
-         !is.na(S_obs))
-
-pars <- c(log_alpha = log(200),
-          log_Rmax = log(25000 / dam_survival),
-          log_sd = log(1))
-bh_lik(pars = pars, data = wyn_comp)
-opt <- optim(pars, bh_lik, data = wyn_comp)
-opt
-})
-
-plts <- lapply(seq_along(ds), \(idx) {
-
-  opt <- opts[[idx]]
-  wyn_comp <- dfs[[idx]] |>
-    select(year, M_obs, S_obs) |>
+  ## Extract the data set and double check that there are no missing
+  ## observations that will crash R
+  wyn_data <- dfs[[idx]] |>
     filter(!is.na(M_obs),
+           !is.na(F_rate),
            !is.na(S_obs))
+  write_rds(wyn_data, file.path(data_dir, "wyn_data.rds"))
 
-  bh_df <- tibble(S = seq(0, 5500, 25)) |>
-    mutate(M_hat = SR(alpha = exp(opt$par[1]), Rmax = exp(opt$par[2]), S = S),
-           M10 = qlnorm(0.1, log(M_hat), exp(opt$par[3])),
-           M90 = qlnorm(0.9, log(M_hat), exp(opt$par[3])))
+  ## Use the `salmonIPM::stan_data` function to generate data. This isn't used,
+  ## but we need to save it in order to extract the default prior on Mmax, which
+  ## is derived from the data. There may be a better way to do this, either by
+  ## extracting these values from the `stanfit` object at the end, or by
+  ## treating this as the source of "truth" and extracting the necessary values
+  ## below. This would prevent mismatched prior specifications in the final
+  ## figures.
+  wyn_stan_data <- stan_data(
+    stan_model = "IPM_SS_np",
+    SR_fun = "BH",
+    ages = list(M = 1),
+    center = FALSE, scale = FALSE,
+    fish_data = wyn_data,
+    age_F = c(1, 1),
+    age_B = c(0, 0)
+  )
+  write_rds(wyn_stan_data, file.path(data_dir, "wyn_stan_data.rds"))
 
-  ggplot() +
-    geom_ribbon(data = bh_df,
-                aes(x = S, ymin = M10, ymax = M90),
-                alpha = 0.3) +
-    geom_line(data = bh_df,
-              aes(x = S, y = M_hat)) +
-    geom_point(data = wyn_comp,
-               aes(x = S_obs, y = M_obs, color = year)) +
-    geom_path(data = wyn_comp,
-              aes(x = S_obs, y = M_obs, color = year),
-              alpha = 0.3) +
-    geom_label(data = filter(wyn_comp, year %% 5 == 0),
-               aes(x = S_obs, y = M_obs, label = year),
-               nudge_x = 100) +
-    coord_cartesian(xlim = c(0, NA),
-                    ## Ensure that the label and point aren't *right* at the edge
-                    ylim = c(0, 1.02 * max(wyn_comp$M_obs)),
-                    expand = FALSE) +
-    labs(x = "Spawners", y = "Smolts", color = "Year")
-})
+  wyn_fit <- salmonIPM(
+    model = "IPM", life_cycle = "SMS", pool_pops = FALSE,
+    SR_fun = "BH",
+    ages = list(M = 1),
+    center = FALSE, scale = FALSE,
+    fish_data = wyn_data,
+    age_F = c(1, 1),
+    age_B = c(0, 0),
+    ## age_S_obs = c(FALSE, TRUE),
+    ## age_S_eff = c(FALSE, TRUE),
+    prior = list(
+      ## alpha ~ lognormal(2, 5), # DEFAULT
+      ## alpha ~ lognormal(log(80), 2)
+      ## , Mmax ~ lognormal(wyn_stan_data$prior_Rmax[1], wyn_stan_data$prior_Rmax[2] / 4) # DEFAULT (derived from data)
+      ## , mu_MS ~ beta() # DEFAULT
+      ## Age distribution is informed by Bingham data; this is a semi-informative
+      ## prior to help keep things reasonable
+      ## , mu_p ~ dirichlet(c(1, 1)) # DEFAULT
+    , mu_p ~ dirichlet(c(2, 18))
+      ## Spawners are observed precisely during trap-and-haul upstream, but
+      ## allowing variance to get too close to zero results in divergent
+      ## transitions. This is why the default prior has an explicitly zero-avoiding
+      ## prior.
+      ## , tau_S ~ gnormal(1, 0.85, 30) # DEFAULT
+    , tau_S ~ gnormal(0.25, 0.075, 3) # Keeps values < 0.1, but lower than default
+      ## Smolts are very approximate because they are back-calculated from Bingham
+      ## SAR rates, so
+      ## , tau_M ~ gnormal(1, 0.85, 30) # DEFAULT
+      ## , tau_M ~ gnormal(2, 1, 2) # Wider and larger than default, might need to avoid small values more
+    ),
+    chains = 4, iter = 10000,
+    control = list(adapt_delta = 0.99,
+                   metric = "dense_e")
+  )
+  attr(wyn_fit, "dam_survival") <- ds[idx]
 
-pars <- lapply(seq_along(ds), \(idx) {
-  opt <- opts[[idx]]
-  p <- c(dam_survival = ds[idx],
-         alpha = exp(opt$par[1]),
-         Rmax = exp(opt$par[2]),
-         sdlog = exp(opt$par[3]))
-  names(p) <- c("dam_survival", "alpha", "Rmax", "sdlog")
-  p
-})
+  write_rds(wyn_fit, file.path(data_dir, "wyn_fit.rds"))
 
-
-## Fit the model ---------------------------------------------------------------
-wyn_fit <- salmonIPM(
-  model = "IPM", life_cycle = "SMS", pool_pops = FALSE,
-  SR_fun = "BH",
-  ages = list(M = 1),
-  center = FALSE, scale = FALSE,
-  fish_data = wyn,
-  age_F = c(1, 1),
-  age_B = c(0, 0),
-  # age_S_obs = c(FALSE, TRUE),
-  # age_S_eff = c(FALSE, TRUE),
-  prior = list(mu_p ~ dirichlet(c(1, 9))),
-  chains = 0, iter = 2000,
-  control = list(adapt_delta = 0.95,
-                 metric = "diag_e"))
-## save_rds(wyn_fit, "data/wyn_fit.rds")
-
-wyn_fit
+  wyn_post <- as_draws_rvars(wyn_fit)
+  attr(wyn_post, "dam_survival") <- ds[idx]
+  write_rds(wyn_post, file.path(data_dir, "wyn_post.rds"))
+}
