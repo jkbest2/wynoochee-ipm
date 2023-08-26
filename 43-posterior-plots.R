@@ -20,8 +20,8 @@ plot_posteriors <- function(ds, ...) {
   ## Productivity parameters -----------------------------------------------------
   tibble(
     parameter = c("M[max]", "alpha"),
-    prior = c(dist_lognormal(wyn_stan_data$prior_Rmax[1], wyn_stan_data$prior_Rmax[2]),
-              dist_lognormal(log(80), 1)),
+    prior = c(dist_lognormal(6.58 + log(2), sqrt(0.18^2 + 0.64^2)),
+              dist_lognormal(4.27 + log(0.9), sqrt(0.18^2 + 0.43^2))),
     posterior = c(wyn_post$Mmax, wyn_post$alpha)
   ) |>
     ggplot() +
@@ -36,7 +36,8 @@ plot_posteriors <- function(ds, ...) {
                   expand = expansion(mult = c(0, 0.02))) +
     scale_y_continuous(expand = expansion(mult = c(0, 0.02))) +
     labs(x = "Value", y = "",
-         title = paste0(ds * 100, "% Downstream Dam Passage Survival"))
+         title = "Marginal smolt production parameter posteriors",
+         subtitle = paste0(ds * 100, "% Downstream Dam Passage Survival"))
   ggsave(file.path(data_dir, "01-prod-pars.png"), ...)
 
   tibble(
@@ -53,12 +54,12 @@ plot_posteriors <- function(ds, ...) {
          subtitle = paste0(ds * 100, "% Downstream Dam Passage Survival"))
   ggsave(file.path(data_dir, "02-joint-prod-pars.png"), ...)
 
-  bev_holt <- function(sp, alpha, rmax, A = 10)
+  bev_holt <- function(sp, alpha, rmax, A = 20)
     alpha * sp / (1 + alpha * sp / (A * rmax))
 
   bev_holt_rv <- rfun(bev_holt)
 
-  tibble(spawners = seq(0, max(wyn_data$S_obs, na.rm = TRUE), length.out = 256),
+  tibble(spawners = seq(0, 1.02 * max(wyn_data$S_obs, na.rm = TRUE), length.out = 256),
          smolts = bev_holt(spawners, wyn_post$alpha, wyn_post$Mmax)) |>
     ggplot() +
     stat_lineribbon(aes(x = spawners, ydist = smolts),
@@ -173,4 +174,4 @@ plot_posteriors <- function(ds, ...) {
   invisible(data_dir)
 }
 
-walk(seq(0.2, 1, 0.2), plot_posteriors)
+walk(seq(0.2, 1, 0.2), plot_posteriors, width = 10)
