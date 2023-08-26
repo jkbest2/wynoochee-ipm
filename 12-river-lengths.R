@@ -2,6 +2,7 @@
 library(tidyverse)  # Data manipulation and plotting
 library(sf)         # Spatial data handling
 library(USAboundaries)
+library(units)
 
 source("R/geodata-functions.R")
 
@@ -48,14 +49,14 @@ wyn_mrr_top <- wyn_res_mrr |>
   as_tibble() |>
   select(easting = X, northing = Y) |>
   distinct() |>
-  arrange(-northing) |>
+  arrange(northing) |>
   head(n = 2)
 ## Calculates the slope of the northern edge
 wyn_mrr_s <- wyn_mrr_top |>
   summarize(s = diff(northing) / diff(easting)) |>
   pull(s)
 ## Define the distance to extend the line east-west
-d <- 1e3
+d <- 2e3
 ## Use this to create a new line feature
 wyn_res_top <- wyn_mrr_top |>
   mutate(sgn = sign(easting - mean(easting)),
@@ -67,15 +68,20 @@ wyn_res_top <- wyn_mrr_top |>
   st_sfc(crs = crs)
 ## And create a single-sided buffer
 wyn_up_buff <- wyn_res_top |>
-  st_buffer(dist = 6e3, singleSide = TRUE)
+  st_buffer(dist = -12e3, singleSide = TRUE)
 ## Which is then used to extract the features above the reservoir
 wynup <- swifd |>
   st_intersection(wyn_up_buff)
 
 ## Plots used to double check geometry selection and refine the buffer distances
-# plot(wyn_up_buff, col = "gray")
-# plot(wyn_res, col = "skyblue", add = TRUE)
-# plot(wyn_up$geometry, col = "blue", add = TRUE)
+plot(wyn_up_buff, col = "gray")
+plot(wyn_res, col = "skyblue", add = TRUE)
+plot(wynup$geometry, col = "blue", add = TRUE)
+## plot(swifd$geometry, col = "black", add = TRUE)
+
+## wyn_up |>
+## mutate(length = st_length(geometry) |>
+## summarize(length = sum(length))
 
 ## Get Bingham Creek and tributaries -------------------------------------------
 bing <- swifd |>
@@ -83,9 +89,9 @@ bing <- swifd |>
   iter_intersect(filter(swifd, !grepl("Satsop", GNIS_NAME)))
 
 ## Plots to double check operations.
-# plot(bing$geometry)
-# plot(swifd$geometry, add = TRUE)
-# plot(bing$geometry, col = "skyblue", lwd = 3, add = TRUE)
+## plot(bing$geometry)
+## plot(swifd$geometry, add = TRUE)
+## plot(bing$geometry, col = "skyblue", lwd = 3, add = TRUE)
 
 ## Get Big Creek for potential strays ------------------------------------------
 bigcr <- swifd |>
@@ -95,9 +101,9 @@ bigcr <- swifd |>
   iter_intersect(filter(swifd, GNIS_NAME != "Wynoochee River"))
 
 ## Check with plots
-# plot(bigcr$geometry)
-# plot(swifd$geometry, add = TRUE)
-# plot(bigcr$geometry, col = "skyblue", lwd = 3, add = TRUE)
+## plot(bigcr$geometry)
+## plot(swifd$geometry, add = TRUE)
+## plot(bigcr$geometry, col = "skyblue", lwd = 3, add = TRUE)
 
 ## Postprocess the river sections ----------------------------------------------
 wynup_line <- wynup |>
