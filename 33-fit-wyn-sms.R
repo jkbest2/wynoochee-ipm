@@ -20,6 +20,11 @@ bing_harvest <- read_rds("data/bing_harvest.rds") |>
          survival_escapement, # Overall smolt -> adult survival
          harvest_total)
 
+wyn_hab <- read_rds("data/hab_df.rds") |>
+  filter(name == "Upper Wynoochee") |>
+  pluck("habitat") |>
+  drop_units()
+
 ## These are the values of dam survival that we are using to inflate the smolt
 ## counts.
 ds <- seq(0.2, 1, by = 0.2)
@@ -42,9 +47,7 @@ dfs <- lapply(ds, \(dam_survival) {
     left_join(bing_harvest, by = join_by(year)) |>
     filter(!is.na(harvest_total)) |>
     mutate(pop = "Upper Wynoochee",
-           A = 10,
-           ## n_age2_obs = 0.1,
-           ## n_age3_obs = 0.48,
+           A = wyn_hab,
            S_obs = count,
            n_W_obs = 0,
            n_H_obs = 0,
@@ -68,7 +71,7 @@ dfs <- lapply(ds, \(dam_survival) {
     ## rate *as the mature fish they return with*.
     mutate(
       jack_smolts = lead(S_obs, 2) * lead(frac_jack, 2) /
-        lead(survival_escapement, 2),
+        lead(survival_escapement, 3), # Best assumption of ocean survival is that it tracks the brood year adult ocean survival
       mature_smolts = lead(S_obs, 3) * (1 - lead(frac_jack, 3)) /
         lead(survival_escapement, 3),
       M_obs = (jack_smolts + mature_smolts) / dam_survival) |>
@@ -92,6 +95,7 @@ dfs <- lapply(ds, \(dam_survival) {
 
   wyn
 })
+write_rds(dfs, "data/wyn_dfs.rds")
 
 walk(seq_along(ds), \(idx) {
   ## Create the directory to save results if necessary
@@ -136,19 +140,25 @@ walk(seq_along(ds), \(idx) {
     ## age_S_eff = c(FALSE, TRUE),
     prior = list(
       ## alpha ~ lognormal(2, 5), # DEFAULT
-      ## alpha ~ lognormal(log(80), 2)
-      ## , Mmax ~ lognormal(wyn_stan_data$prior_Rmax[1], wyn_stan_data$prior_Rmax[2] / 4) # DEFAULT (derived from data)
+      ## Mmax ~ lognormal(wyn_stan_data$prior_Rmax[1], wyn_stan_data$prior_Rmax[2]) # DEFAULT (derived from data)
+
+      ## Priors from the Barrowman et al. (2003) meta-analysis. alpha prior
+      ## includes correction assuming 45% of spawners are female and 50% of
+      ## smolts are female. Mmax does the same, doubling the capacity per unit
+      ## habitat to account for male smolts.
+      alpha ~ lognormal(4.27 + log(0.9), sqrt(0.18^2 + 0.43^2)),
+      Mmax ~ lognormal(6.58 + log(2), sqrt(0.18^2 + 0.64^2)),
       ## , mu_MS ~ beta() # DEFAULT
       ## Age distribution is informed by Bingham data; this is a semi-informative
       ## prior to help keep things reasonable
       ## , mu_p ~ dirichlet(c(1, 1)) # DEFAULT
-    , mu_p ~ dirichlet(c(2, 18))
+      mu_p ~ dirichlet(c(2, 18)),
       ## Spawners are observed precisely during trap-and-haul upstream, but
       ## allowing variance to get too close to zero results in divergent
       ## transitions. This is why the default prior has an explicitly zero-avoiding
       ## prior.
       ## , tau_S ~ gnormal(1, 0.85, 30) # DEFAULT
-    , tau_S ~ gnormal(0.25, 0.075, 3) # Keeps values < 0.1, but lower than default
+      tau_S ~ gnormal(0.25, 0.075, 3) # Keeps values < 0.1, but lower than default
       ## Smolts are very approximate because they are back-calculated from Bingham
       ## SAR rates, so
       ## , tau_M ~ gnormal(1, 0.85, 30) # DEFAULT
@@ -165,4 +175,4 @@ walk(seq_along(ds), \(idx) {
   wyn_post <- as_draws_rvars(wyn_fit)
   attr(wyn_post, "dam_survival") <- ds[idx]
   write_rds(wyn_post, file.path(data_dir, "wyn_post.rds"))
-}
+})
