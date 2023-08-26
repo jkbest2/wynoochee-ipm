@@ -1,0 +1,483 @@
+---
+title: Coho smolt survival through the Wynoochee Dam
+author:
+    - John Best
+format: 
+    revealjs:
+        chalkboard: true
+        footer: <img src="templates/wdfw-footer.png">
+        css: templates/wdfw.css
+---
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(posterior)
+library(distributional)
+library(ggdist)
+wyn_trap <- read_rds("../data/wyn_trap.rds")
+bing_harvest <- read_rds("../data/bing_harvest.rds")
+wyn_dfs <- read_rds("../data/wyn_dfs.rds")
+wyn_hab <- units::drop_units(read_rds("../data/hab_df.rds")$habitat[1])
+```
+## Lower Chehalis Basin
+
+![](figs/che-map.png){fig-align="center"}
+
+::: {.notes}
+- Upstream migration via trap-and-haul from barrier dam 2 miles downstream
+- Downstream migration passive, turbines not operated for 77 days during peak migration ([TacoPower](https://www.mytpu.org/community-environment/fish-wildlife-environment/wynoochee-river-project/)).
+:::
+
+## Goal
+
+Constrain the range of rate of survival of smolts migrating downstream through the Wynoochee Dam.
+
+### Approach
+
+Estimate population productivity parameters under different survival rates and compare to meta-analytic results from Barrowman et al. (2003).
+
+## Integrated population model
+
+```{mermaid}
+flowchart LR
+    S(Spawners) -->|Beverton-\nHolt| M(Smolts\nage 0)
+    M -->|Dam\nPassage| O{Ocean}
+    O --> J(Jack\nage 2)
+    O --> A(Adult\nage 3)
+    J --> H[Harvest]
+    A --> H
+    H --> S
+    %%H-. Strays .->S
+```
+
+## Integrated population model
+
+```{mermaid}
+flowchart LR
+    S(Spawners) -->|Beverton-\nHolt| M(Smolts\nage 0)
+    M -->|Dam\nPassage| O{Ocean}
+    O --> J(Jack\nage 2)
+    O --> A(Adult\nage 3)
+    J --> H[Harvest]
+    A --> H
+    H --> S
+    %%H-. Strays .->S
+```
+
+### Data required
+
+:::: {.columns}
+::: {.column width="45%"}
+- Observed spawners
+- Observed smolts
+:::
+::: {.column width="45%"}
+- Return age composition
+- Harvest rate
+:::
+::::
+
+## Observations from the upper Wynoochee
+
+### Number of spawners
+
+```{r}
+#| dpi: 300
+wyn_trap |>
+  filter(species == "coho") |>
+ggplot(aes(x = year, y = count)) +
+  geom_point() +
+  geom_line() +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+  labs(x = "Year", y = "Adults transported upstream")
+```
+
+## Observations from the upper Wynoochee
+
+### Habitat
+
+:::: {.columns}
+::: {.column width="55%"}
+![](figs/upper_wyn_hab.png){fig-align="center"}
+:::
+::: {.column width="40%"}
+- Statewide Integrated Fish Distribution (SWIFD)
+- **23km of habitat**
+:::
+::::
+
+## Observations from Bingham Creek
+
+### Smolt-to-adult survival
+
+```{r}
+#| dpi: 300
+ggplot(bing_harvest, aes(x = return_year, y = survival_escapement)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = seq(1950, 2050, 5), minor_breaks = NULL) +
+  scale_y_continuous(labels = scales::percent,
+                     limits = c(0, NA),
+                     expand = expansion(mult = c(0, 0.02))) +
+  labs(x = "Return year", y = "Smolt-to-adult survival")
+```
+
+::: {.notes}
+- Shorter time series than Wynoochee
+- Can still use all data because IPM allows for missing years
+:::
+
+## Observations from Bingham Creek
+
+### Harvest rate
+
+```{r}
+#| dpi: 300 
+ggplot(bing_harvest, aes(x = return_year, y = harvest_total)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = seq(1950, 2050, 5), minor_breaks = NULL) +
+  scale_y_continuous(labels = scales::percent,
+                     limits = c(0, NA),
+                     expand = expansion(mult = c(0, 0.02))) +
+  labs(x = "Return year", y = "Harvest rate")
+```
+
+## Observations from Bingham Creek
+
+### Age composition
+
+- Reduced sample size by factor of 10
+- Included weakly informative prior, roughly 95% of fish return as adults
+
+## Wynoochee smolt abundance
+
+### Key assumptions 
+- Smolt-to-adult survival is similar between watersheds
+- Harvest rate is similar between watersheds
+- Age composition is similar between watersheds
+- Smolt-to-jack survival is similar *within brood years*
+
+## Wynoochee smolt abundance
+
+Then (roughly)
+
+$$M_t =
+\underbrace{\frac{j_{t+2} S_{t + 2}}{\phi_{t + 3}}}_{\text{Jacks}} +
+\underbrace{\frac{(1 - j_{t + 3}) S_{t + 3}}{\phi_{t + 3}}}_{\text{Adults}}$$
+
+where
+
+- $M_t$: Smolts in year $t$
+- $S_{t}$: Spawners in year $t$
+- $j_{t}$: Proportion jacks in year $t$^[In years without age composition data
+  from Bingham, the global mean proportion is used.]
+- $\phi_{t}$: Smolt-to-adult survival in return year $t$
+
+## Wynoochee smolt abundance
+
+- Assumes 100% survival through the dam
+- Don't have any data on passage survival
+- Fixed survival rates of $p \in \{20\%, 40\%, 60\%, 80\%, 100\%\}$.
+
+The model is then fit with smolt abundance
+
+$$\tilde{M}_{t} = M_{t} / p$$
+
+## Wynoochee smolt abundance
+
+```{r}
+#| dpi: 300
+ps <- paste0(seq(20, 100, 20), "%")
+imap(wyn_dfs, \(df, idx) mutate(df, p = ps[idx])) |>
+  bind_rows() |>
+  mutate(p = factor(p, levels = ps),
+         M_obs = M_obs / A) |>
+  filter(!is.na(M_obs)) |>
+  ggplot(aes(x = year, y = M_obs, color = p)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, NA),
+                     expand = expansion(mult = c(0, 0.05)),
+                     labels = scales::comma) +
+  labs(x = "Year",
+       y = "Smolts per km habitat",
+       color = "Dam\nsurvival")
+```
+
+## Prior information
+
+### Age composition
+
+- Multiple years have no age observations
+- Weakly informative
+- 90% chance that returners are between 77% and 98% adults
+
+$$j_t \sim \operatorname{Beta}(2, 18).$$
+
+## Prior information
+
+### Observation uncertainty
+
+- Reduced^[Reduction was limited by model-fitting considerations.] uncertainty for
+spawners
+- Trap-and-haul should give an accurate count
+
+$$\tau_{S} \sim \operatorname{Generalized\ Normal}(0.25, 0.075, 3).$$
+
+- Used the default uncertainty prior for smolts
+- Increasing observation uncertainty didn't change estimates
+
+$$\tau_{M} \sim \operatorname{Generalized\ Normal}(1, 0.85, 30).$$
+
+## Population productivity
+
+- Used priors from Barrowman et al. (2003) meta-analysis
+- Rescaled to account for males
+
+$$\alpha \sim \operatorname{log\ Normal}(4.16, 0.466^{2})$$
+
+$$M_{max} \sim \operatorname{log\ Normal}(7.27, 0.665^{2})$$
+
+## Model fitting
+
+- Used the `salmonIPM` R package
+- Fit using Stan's NUTS
+- 4 chains, 10,000 iterations each
+- Good convergence diagnostics
+
+# Results
+
+## Intrinsic productivity: $\alpha$
+
+```{r}
+ps <- seq(0.2, 1, 0.2)
+wyn_post <- map(paste0("ds", ps * 100),
+                \(dir) read_rds(file.path("..", "data", dir, "wyn_post.rds")))
+post_df <- tibble(
+  p = ps,
+  alpha = map_vec(wyn_post, pluck, "alpha"),
+  mmax = map_vec(wyn_post, pluck, "Mmax")
+)
+prior_df <- tibble(
+  alpha = dist_lognormal(4.27 + log(0.9), sqrt(0.18^2 + 0.43^2)),
+  mmax = dist_lognormal(6.58 + log(2), sqrt(0.18^2 + 0.64^2)),
+)
+prior_df2 <- tibble(
+  p = ps,
+  alpha = prior_df$alpha,
+  mmax = prior_df$mmax
+)
+```
+
+```{r}
+#| dpi: 300
+post_df |>
+  select(p, alpha) |>
+  mutate(prior = prior_df$alpha) |>
+  ggplot() +
+  stat_slab(aes(xdist = prior, y = p), alpha = 0.5, color = "gray") +
+  stat_slabinterval(aes(xdist = alpha, y = p, fill = factor(p)),
+                    alpha = 0.5,
+                    interval_alpha = 1,
+                    point_alpha = 1) +
+  scale_y_continuous(breaks = seq(0.2, 1, 0.2), labels = scales::percent) +
+  coord_cartesian(xlim = c(0, 503), ylim = c(0.19, NA), expand = FALSE) +
+  guides(fill = FALSE) +
+  labs(x = "Smolts per spawner at low density",
+       y = "Dam passage survival")
+```
+
+## Smolt capacity: $M_{max}$
+
+```{r}
+#| dpi: 300
+post_df |>
+  select(p, mmax) |>
+  mutate(prior = prior_df$mmax) |>
+  ggplot() +
+  stat_slab(aes(xdist = prior, y = p), alpha = 0.5, color = "gray") +
+  stat_slabinterval(aes(xdist = mmax, y = p, fill = factor(p)),
+                    alpha = 0.5,
+                    interval_alpha = 1,
+                    point_alpha = 1) +
+  scale_x_continuous(breaks = seq(0, 100e3, 2e3),
+                     minor_breaks = seq(0, 100e3, 1e3)) +
+  scale_y_continuous(breaks = seq(0.2, 1, 0.2), labels = scales::percent) +
+  coord_cartesian(xlim = c(0, 10e3 + 100), ylim = c(0.19, NA), expand = FALSE) +
+  guides(fill = FALSE) +
+  labs(x = "Maximum smolts per kilometer",
+       y = "Dam passage survival")
+```
+
+## Smoothed spawner abundance
+
+```{r}
+#| dpi: 300
+map(seq_along(wyn_post),
+     \(idx)
+    wyn_dfs[[idx]] |>
+    filter(!is.na(M_obs)) |>
+    select(year, area = A, spawn_obs = S_obs) |>
+    mutate(spawn_est = wyn_post[[idx]]$S,
+           p = ps[idx])
+  ) |>
+  bind_rows() |>
+  filter(p %in% ps[c(3, 5)]) |>
+  mutate(p = paste0(100 * p, "%")) |>
+    ggplot(aes(x = year,
+               ydist = spawn_est)) +
+    stat_pointinterval(fill = "skyblue", color = "skyblue") +
+    geom_point(aes(x = year, y = spawn_obs),
+               inherit.aes = FALSE) +
+    scale_x_continuous(breaks = seq(1950, 2050, by = 5)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.02)), labels = scales::comma) +
+    expand_limits(y = 0) +
+    labs(x = "Year", y = "Spawners") +
+  facet_wrap(~ p, ncol = 1, scales = "free_y")
+```
+
+## Predicted smolt production
+
+```{r}
+#| dpi: 300
+map(seq_along(wyn_post),
+     \(idx)
+    wyn_dfs[[idx]] |>
+    filter(!is.na(M_obs)) |>
+    select(year, area = A, smolt_obs = M_obs) |>
+    mutate(smolt_est = wyn_post[[idx]]$M,
+           p = ps[idx])
+  ) |>
+  bind_rows() |>
+  filter(p %in% ps[c(3, 5)]) |>
+  mutate(p = paste0(100 * p, "%")) |>
+    ggplot(aes(x = year,
+               ydist = smolt_est)) +
+    stat_pointinterval(fill = "skyblue", color = "skyblue") +
+    geom_point(aes(x = year, y = smolt_obs),
+               inherit.aes = FALSE) +
+    scale_x_continuous(breaks = seq(1950, 2050, by = 5)) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.02)), labels = scales::comma) +
+    expand_limits(y = 0) +
+    labs(x = "Year", y = "Smolts") +
+  facet_wrap(~ p, ncol = 1, scales = "free_y")
+```
+
+## Beverton-Holt, 100% survival
+
+```{r}
+bev_holt <- function(sp, alpha, rmax)
+  alpha * sp / (1 + alpha * sp / (wyn_hab * rmax))
+
+bev_holt_rv <- rfun(bev_holt)
+
+bh_fit <- map(
+  seq_along(wyn_post),
+  \(idx)
+  tibble(p = ps[idx],
+         spawners = seq(0, 6000 * 1.02, length.out = 256),
+         smolts = bev_holt(spawners, wyn_post[[idx]]$alpha, wyn_post[[idx]]$Mmax))
+)
+
+bh_data <- map(
+  seq_along(wyn_post),
+  \(idx)
+  wyn_dfs[[idx]] |>
+  filter(!is.na(M_obs)) |>
+  select(year,
+         spawn_obs = S_obs,
+         smolt_obs = M_obs) |>
+  mutate(spawn_est = wyn_post[[idx]]$S,
+         smolt_est = wyn_post[[idx]]$M,
+         p = ps[idx])
+)
+
+
+plot_bh <- function(idx, bh_fit, bh_data, zoom = TRUE) {
+  if (zoom) {
+    smolt_upper <- 1.1 * quantile(tail(bh_fit[[idx]]$smolts, 1), 0.975)
+  } else {
+    smolt_upper <- NA
+  }
+  
+  ggplot() +
+    stat_lineribbon(data = bh_fit[[idx]],
+                    aes(x = spawners, ydist = smolts),
+                    linewidth = 0.5,
+                    alpha = 0.3) +
+    stat_pointinterval(data = bh_data[[idx]],
+                       aes(x = median(spawn_est), ydist = smolt_est),
+                       .width = c(0, 0.8),
+                       color = "gray30",
+                       fatten_point = 1) +
+    stat_pointinterval(data = bh_data[[idx]],
+                       aes(xdist = spawn_est, y = median(smolt_est)),
+                       .width = c(0, 0.8),
+                       color = "gray30",
+                       fatten_point = 1) +
+    geom_point(data = bh_data[[idx]],
+               aes(x = spawn_obs, y = smolt_obs),
+               alpha = 0.5, color = "#007A53") +
+    geom_segment(data = bh_data[[idx]],
+                 aes(x = spawn_obs, xend = median(spawn_est),
+                     y = smolt_obs, yend = median(smolt_est)),
+                 alpha = 0.5, color = "#007A53") +
+    scale_fill_ordinal(option = "mako") +
+    scale_x_continuous(labels = scales::comma,
+                       expand = expansion(mult = c(0, 0))) +
+    scale_y_continuous(labels = scales::comma,
+                       expand = expansion(mult = c(0, 0.02))) +
+    coord_cartesian(ylim = c(0, smolt_upper)) +
+    guides(linewidth = "none", fill = "none") +
+    labs(x = "Spawners", y = "Smolts")
+}
+```
+
+```{r}
+#| dpi: 300
+plot_bh(5, bh_fit, bh_data, zoom = FALSE)
+```
+
+
+## Beverton-Holt, 100% survival
+
+```{r}
+#| dpi: 300
+plot_bh(5, bh_fit, bh_data)
+```
+
+## Beverton-Holt, 60% survival
+
+```{r}
+#| dpi: 300
+plot_bh(3, bh_fit, bh_data)
+```
+
+## Beverton-Holt, 20% survival
+
+```{r}
+#| dpi: 300
+plot_bh(1, bh_fit, bh_data)
+```
+
+## Conclusion
+
+- The Upper Wynoochee is a productive system
+- Reservoir may be providing additional rearing habitat
+- Results are consistent with dam passage survival of 60% or higher
+
+## Other considerations
+
+- Did not consider effects of straying from Big Creek
+- Big Creek has 10km of habitat
+- To affect results, straying would need to be strongly asymmetric
+- Would also require *very high* productivity in Big Creek
+
+## Next steps
+
+Need additional data:
+
+- Mark-recapture to estimate passage survival
+- Mark-recapture to estimate smolt abundance
+
