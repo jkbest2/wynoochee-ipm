@@ -49,11 +49,11 @@ bing_fit <- salmonIPM(
   age_B = c(0, 0),
   # age_S_obs = c(TRUE, TRUE),
   # age_S_eff = c(TRUE, TRUE),
-  prior = list(mu_p ~ dirichlet(c(0.1, 0.9))),
+  prior = list(mu_p ~ dirichlet(c(0.1, 0.9)), # More informative prior on age distribution
+               tau ~ gnormal(0, 0.01, 1)),    # Spawners are observed precisely due to trap-and-haul
   chains = 4, iter = 10000,
-  control = list(adapt_delta = 0.999,
+  control = list(adapt_delta = 0.99,
                  metric = "dense_e")
 )
 
 bing_fit
-wyn_fit
