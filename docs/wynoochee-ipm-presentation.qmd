@@ -7,10 +7,13 @@ format:
         chalkboard: true
         footer: <img src="templates/wdfw-footer.png">
         css: templates/wdfw.css
+    pptx:
+        reference-doc: templates/wdfw-template.pptx
 ---
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 library(tidyverse)
+library(readxl)
 library(posterior)
 library(distributional)
 library(ggdist)
@@ -40,7 +43,7 @@ Estimate population productivity parameters under different survival rates and c
 
 ```{mermaid}
 flowchart LR
-    S(Spawners) -->|Beverton-\nHolt| M(Smolts\nage 0)
+    S(Spawners) -->|Beverton-\nHolt| M(Smolts\nage 1)
     M -->|Dam\nPassage| O{Ocean}
     O --> J(Jack\nage 2)
     O --> A(Adult\nage 3)
@@ -54,7 +57,7 @@ flowchart LR
 
 ```{mermaid}
 flowchart LR
-    S(Spawners) -->|Beverton-\nHolt| M(Smolts\nage 0)
+    S(Spawners) -->|Beverton-\nHolt| M(Smolts\nage 1)
     M -->|Dam\nPassage| O{Ocean}
     O --> J(Jack\nage 2)
     O --> A(Adult\nage 3)
@@ -91,6 +94,33 @@ ggplot(aes(x = year, y = count)) +
   scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
   labs(x = "Year", y = "Adults transported upstream")
 ```
+## Observations from upper Wynoochee
+
+### Age composition
+
+:::: {.columns}
+::: {.column width="55%"}
+```{r fig.width=5, fig.height=5}
+read_xlsx("../rawdata/2016-2022WynoocheeCohoAdultNumbers.xlsx") |>
+  select(year = Coho,
+         Adult = Above,
+         Jack = Jacks) |>
+  filter(year < 2021) |>
+  pivot_longer(c(Adult, Jack),
+               names_to = "age",
+               values_to = "count") |>
+  ggplot(aes(x = year, y = count, fill = age)) +
+  geom_col() +
+  scale_x_continuous(breaks = 2016:2022) +
+  labs(x = "Year", y = "Number of fish", fill = "Age")
+```
+:::
+::: {.column width="40%"}
+- Method for determining age unknown
+- Sample sizes reduced by half
+- Years with no observations: 2.5 jacks, 44.4 adults
+:::
+::::
 
 ## Observations from the upper Wynoochee
 
@@ -143,19 +173,12 @@ ggplot(bing_harvest, aes(x = return_year, y = harvest_total)) +
   labs(x = "Return year", y = "Harvest rate")
 ```
 
-## Observations from Bingham Creek
-
-### Age composition
-
-- Reduced sample size by factor of 10
-- Included weakly informative prior, roughly 95% of fish return as adults
-
 ## Wynoochee smolt abundance
 
 ### Key assumptions 
 - Smolt-to-adult survival is similar between watersheds
 - Harvest rate is similar between watersheds
-- Age composition is similar between watersheds
+- Returner age composition is similar to later years
 - Smolt-to-jack survival is similar *within brood years*
 
 ## Wynoochee smolt abundance
@@ -170,8 +193,7 @@ where
 
 - $M_t$: Smolts in year $t$
 - $S_{t}$: Spawners in year $t$
-- $j_{t}$: Proportion jacks in year $t$^[In years without age composition data
-  from Bingham, the global mean proportion is used.]
+- $j_{t}$: Proportion jacks in year $t$
 - $\phi_{t}$: Smolt-to-adult survival in return year $t$
 
 ## Wynoochee smolt abundance
@@ -209,11 +231,11 @@ imap(wyn_dfs, \(df, idx) mutate(df, p = ps[idx])) |>
 
 ### Age composition
 
-- Multiple years have no age observations
-- Weakly informative
-- 90% chance that returners are between 77% and 98% adults
+- Age composition observations filled in with overall mean
+- Informative prior
+- 95% chance that returners are less than 10% jacks
 
-$$j_t \sim \operatorname{Beta}(2, 18).$$
+$$j_t \sim \operatorname{Beta}(2, 44.5).$$
 
 ## Prior information
 
@@ -476,7 +498,9 @@ plot_bh(1, bh_fit, bh_data)
 
 ## Next steps
 
-Need additional data:
+- Incorporate additional age composition data where available
+
+Gather additional data:
 
 - Mark-recapture to estimate passage survival
 - Mark-recapture to estimate smolt abundance

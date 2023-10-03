@@ -109,10 +109,15 @@ plot_posteriors <- function(ds, ...) {
          subtitle = paste0(ds * 100, "% Downstream Dam Passage Survival"))
   ggsave(file.path(data_dir, "04-obs-uncert-pars.png"), ...)
 
+  ## Setting the age composition prior using an informative Beta distribution.
+  ## Parameterized such that Pr(prop_jacks < 0.1) == 0.95
+  b90 <- uniroot(\(b) pbeta(0.1, 2, b) - 0.95, c(40, 50))
+  age_comp_prior <- c(b90$root, 2)
+
   ## Age distributions
   tibble(
     year = wyn_data$year,
-    prior = dist_beta(18, 2),
+    prior = dist_beta(age_comp_prior[1] , age_comp_prior[2]),
     posterior = wyn_post$p[, 2, drop = TRUE]
   ) |>
     ggplot() +

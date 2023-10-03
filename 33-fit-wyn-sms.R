@@ -2,18 +2,21 @@ library(salmonIPM)
 options(mc.cores = parallel::detectCores(logical = FALSE))
 rstan_options(auto_write = TRUE)
 library(tidyverse)
+library(readxl)
 library(posterior)
+library(units)
 
-bing <- read_rds("data/bing_coho_up.rds") |>
-  mutate(sex = ifelse(type == "female", "female", "male"),
-         age = ifelse(type == "jack", 2, 3)) |>
-  select(-type) |>
-  pivot_wider(id_cols = year,
-              names_from = c(sex, age),
-              values_from = count) |>
-  mutate(age_2 = male_2,
-         age_3 = female_3 + male_3,
-         total = male_2 + male_3 + female_3)
+## bing <- read_rds("data/bing_coho_up.rds") |>
+##   mutate(sex = ifelse(type == "female", "female", "male"),
+##          age = ifelse(type == "jack", 2, 3)) |>
+##   select(-type) |>
+##   pivot_wider(id_cols = year,
+##               names_from = c(sex, age),
+##               values_from = count) |>
+##   transmute(year = year,
+##             bing_age_2 = male_2,
+##             bing_age_3 = female_3 + male_3,
+##             bing_total = male_2 + male_3 + female_3)
 
 bing_harvest <- read_rds("data/bing_harvest.rds") |>
   select(year = return_year,
@@ -21,13 +24,23 @@ bing_harvest <- read_rds("data/bing_harvest.rds") |>
          harvest_total)
 
 wyn_hab <- read_rds("data/hab_df.rds") |>
+  sf::st_drop_geometry() |>
   filter(name == "Upper Wynoochee") |>
   pluck("habitat") |>
-  drop_units()
+  units::drop_units()
+
+wyn_agecomp <- read_xlsx("rawdata/2016-2022WynoocheeCohoAdultNumbers.xlsx") |>
+  select(year = Coho,
+         age_3 = Above,
+         age_2 = Jacks) |>
+  filter(year != 2021) # Data lost this year
 
 ## These are the values of dam survival that we are using to inflate the smolt
 ## counts.
 ds <- seq(0.2, 1, by = 0.2)
+
+adapt_delta <- c(0.999, 0.999, 0.999, 0.999, 0.999)
+max_treedepth <- c(12, 12, 12, 12, 12)
 
 ## Currently need at least two age classes, so using the information from
 ## Bingham on age class observations to inform. We don't want *all* the
@@ -37,7 +50,16 @@ ds <- seq(0.2, 1, by = 0.2)
 ## that 1 jack and 9 mature fish were observed at Wynoochee. This is also
 ## informed by the prior set on the age distribution, which is currently mildly
 ## informative as a Dirichlet(2, 18).
-age_obs_factor <- 10
+bing_age_obs_factor <- 10
+wyn_age_obs_factor <- 2
+
+wyn_total_age_obs <- c(mean(wyn_agecomp$age_2), mean(wyn_agecomp$age_3))
+wyn_nonobs_factor <- 20
+
+## Setting the age composition prior using an informative Beta distribution.
+## Parameterized such that Pr(prop_jacks < 0.1) == 0.95
+b90 <- uniroot(\(b) pbeta(0.1, 2, b) - 0.95, c(40, 50))
+age_comp_prior <- c(2, b90$root)
 
 ## Generate the data frames assuming different levels of smolt survival during
 ## downstream dam passage
@@ -53,12 +75,14 @@ dfs <- lapply(ds, \(dam_survival) {
            n_H_obs = 0,
            fit_p_HOS = FALSE,
            B_take_obs = 0) |>
-    left_join(select(bing, year, age_2, age_3), by = join_by(year)) |>
+    left_join(wyn_agecomp, by = join_by(year)) |>
+    ## left_join(bing, by = join_by(year)) |>
     ## Find age structure
-    mutate(n_age2_obs = age_2 / age_obs_factor,
-           n_age2_obs = replace_na(n_age2_obs, 0),
-           n_age3_obs = age_3 / age_obs_factor,
-           n_age3_obs = replace_na(n_age3_obs, 0),
+    mutate(n_age2_obs = age_2 / wyn_age_obs_factor,
+           n_age2_obs = replace_na(n_age2_obs, wyn_total_age_obs[1] / wyn_nonobs_factor),
+           n_age3_obs = age_3 / wyn_age_obs_factor,
+           n_age3_obs = replace_na(n_age3_obs, wyn_total_age_obs[2] / wyn_nonobs_factor),
+           ## n_age3_obs = replace_na(n_age3_obs, 0),
            frac_jack = age_2 / (age_2 + age_3),
            ## Fill in the fraction of jacks using the overall mean. This allows
            ## us to fill in many more years of data.
@@ -118,7 +142,7 @@ walk(seq_along(ds), \(idx) {
   ## below. This would prevent mismatched prior specifications in the final
   ## figures.
   wyn_stan_data <- stan_data(
-    stan_model = "IPM_SS_np",
+    stan_model = "IPM_SMS_np",
     SR_fun = "BH",
     ages = list(M = 1),
     center = FALSE, scale = FALSE,
@@ -141,7 +165,6 @@ walk(seq_along(ds), \(idx) {
     prior = list(
       ## alpha ~ lognormal(2, 5), # DEFAULT
       ## Mmax ~ lognormal(wyn_stan_data$prior_Rmax[1], wyn_stan_data$prior_Rmax[2]) # DEFAULT (derived from data)
-
       ## Priors from the Barrowman et al. (2003) meta-analysis. alpha prior
       ## includes correction assuming 45% of spawners are female and 50% of
       ## smolts are female. Mmax does the same, doubling the capacity per unit
@@ -152,21 +175,24 @@ walk(seq_along(ds), \(idx) {
       ## Age distribution is informed by Bingham data; this is a semi-informative
       ## prior to help keep things reasonable
       ## , mu_p ~ dirichlet(c(1, 1)) # DEFAULT
-      mu_p ~ dirichlet(c(2, 18)),
+      mu_p ~ dirichlet(age_comp_prior),
       ## Spawners are observed precisely during trap-and-haul upstream, but
       ## allowing variance to get too close to zero results in divergent
       ## transitions. This is why the default prior has an explicitly zero-avoiding
       ## prior.
       ## , tau_S ~ gnormal(1, 0.85, 30) # DEFAULT
-      tau_S ~ gnormal(0.25, 0.075, 3) # Keeps values < 0.1, but lower than default
+      tau_S ~ gnormal(0.25, 0.075, 3) # Keeps values > 0.1, but smaller than default
       ## Smolts are very approximate because they are back-calculated from Bingham
       ## SAR rates, so
       ## , tau_M ~ gnormal(1, 0.85, 30) # DEFAULT
-      ## , tau_M ~ gnormal(2, 1, 2) # Wider and larger than default, might need to avoid small values more
+      ## , tau_M ~ gnormal(2, 1, 2) # Wider and larger than default, might need to
+      ##                            # avoid small values more
     ),
-    chains = 4, iter = 10000,
-    control = list(adapt_delta = 0.99,
-                   metric = "dense_e")
+    chains = 4, iter = 10000, warmup = 8000,
+    control = list(adapt_delta = adapt_delta[idx],
+                   max_treedepth = max_treedepth[idx],
+                   ## "diag_e" works better than "dense_e"
+                   metric = "diag_e")
   )
   attr(wyn_fit, "dam_survival") <- ds[idx]
 
