@@ -1,0 +1,92 @@
+---
+title: An integrated population model for Upper Wynoochee Coho using limited data
+author: John Best
+---
+
+# Abstract
+
+# Background
+
+The Wynoochee River is a tributary of the Chehalis River in western Washington state, with headwaters in the Olympic Mountains (@fig-che-map). The Wynoochee Dam was constructed at river kilometer 84 (river mile 52) and completed in 1972, forming the Wynoochee Reservoir. A power house with 12.8 MW generating capacity was brought online in 1994. The dam is 53 m (175 ft) tall and is a complete barrier to upstream fish passage. The Federal Energy Regulatory Commission (FERC) license these facilities are operated under requires upstream pasage to be provided for anadromous fish species. A barrier dam 3.2 km (2 mi) downstream of the Wynoochee Dam directs fish into holding ponds where they can be transferred to trucks that transport them for release upstream of the Wynoochee Reservoir.
+
+![A map of the lower Chehalis River and select tributaries, including the Wynoochee River, Satsop River, and Bingham Creek. Wynoochee Dam and Wynoochee Lake are also labeled, along with the Bingham Hatchery](figs/che-map.png){#fig-che-map}
+
+Downstream passage of outmigrating juvenile fish is volitional, and provided by shutting down the turbine for XX days during peak outmigration season. Volitional downstream migration means that smolt abundance is not observed, and the effectiveness of passage through the disengaged turbine and any associated mortality is unknown. Dam passage mortality cannot be directly estimated without observations of smolt abundance, but it is possible to constrain the possible range of mortality rates by comparing the overall productivity that would be required to produce the number of adults that are observed at a given dam passage survival rate. For example, if dam passage survival is 50%, twice as many smolts would be required to produce a given number of adults than if dam passage survival was 100%. Coho salmon (*Oncorhynchus kisutch*) are the subject of this study, though it could be extended to other species such as steelhead (*O. mykiss*) given the appropriate data sets.
+
+The approach here uses an integrated population model (IPM) that models density-dependent smolt production by spawners. These smolts migrate through the dam with a chosen survival rate. After this they complete their migration to the ocean, where they are subject to additional mortality. They can then return as jacks (2 year old fish) or as adults (3 year old fish). These individuals are subject to harvest until they return to the upstream fish passage facility, where they are transported above the dam and produce the next generation of smolts (@fig-ipm-flowchart).
+
+```{mermaid}
+%%| fig-cap: The lifecycle model used in the IPM.
+%%| label: fig-ipm-flowchart
+flowchart LR
+    S(Spawners) -->|Beverton-\nHolt| M(Smolts\nage 1)
+    M -->|Dam\nPassage| O{Ocean}
+    O --> J(Jack\nage 2)
+    O --> A(Adult\nage 3)
+    J --> H[Harvest]
+    A --> H
+    H --> S
+    %%H-. Strays .->S
+```
+
+Because direct observations from the Wynoochee River are sparse, data from nearby, similar watersheds is incorporated into this study. In particular, ocean survival and harvest rates from the wild Coho population in Bingham Creek. Fish that originate in Bingham Creek are subject to similar distances and conditions during downstream migration, in the ocean, and on their return, including harvest (@fig-che-map).
+
+The @BarrowmanEtAl2003 meta-analysis estimated smolt productivity parameters across a number of streams in the Pacific Northwest, including Bingham Creek. These estimates were combined into a probability distribution that characterized the values these parameters were likely to take among watersheds. This distribution provides both a source of prior information for our Bayesian analysis and a basis for comparison with the smolt productivity values likely to occur under different dam passage survival scenarios. If a particular value of dam passage survival requires productivity parameters that are in low-probability regions of the meta-distribution we can take that as evidence against that value of dam passage survival.
+
+# Methods
+
+A series of five models were fit, assuming 20%, 40%, 60%, 80%, or 100% dam passage survival. The models were otherwise specified identically.
+
+The `salmonIPM` [@BuhleScheuerell2023] model was used to specify the IPM, interfaced through the R programming language [@RCoreTeam2023]. The model was fit using Markov Chain Monte Carl with the No-U-Turn Sampler [@HoffmanGelman2014].
+
+## Available data
+
+In order to fit the IPM, four pieces of data were required: spawner abundance, smolt abundance, spawner age structure, and harvest rate. Spawner abundance is available directly from transport records, and 
+
+Relatively little data is available for coho in the Upper Wynoochee basin. Direct observations of the number of adults transported upstream from the barrier dam are available, as are limited age composition observations (i.e. jack vs adult proporations). These data are available from XXXX-XXXX. Because downstream passage through the Wynoochee Dam is directly through the turbine, there are no direct observations of smolt abundance
+
+The goal is to look at the effects of dam pasage survival on estimates of productivity and capacity. To do this, we use a two-stage integrated population model. Adult-to-smolt production follows a Beverton-Holt production function that depends on intrinsic productivity $r$, maximum smolt production per kilometer of habitat $M_{max}$, and habitat length $A$
+
+$$M_{t} = \frac{rS_{t}}{1 + S_{t}/(A M_{max})}.$$
+
+Smolt-to-adult survival is not density dependent. The final piece of information required for the model is harvest rate.
+
+As usual for coho, fish are assumed to smolt roughly one year after they are spawned, and then return at age 2 (as jacks) or age 3.
+
+data required:
+- smolt abundance
+- harvest rate
+- adult age structure
+- number of adults
+
+Only have direct observations of numbers of adults, as these are trapped and hauled above the Wynoochee Dam. We could infer the population productivity parameters using these data in a single-stage IPM, but this does not allow us to consider the effect of imperfect survival when juveniles are migrating downstream through the turbine. To account for this, we used a two-stage IPM. This still required that we have some information on harvest rates and smolt-to-adult survival. To 
+
+
+
+20km of habitat assumed, based on the stream length available above the barrier dam [FIGURE XX]. This assumes that rearing habitat, rather than spawning habitat, is limiting and so areas downstream of the reservoir inlet are usable. 
+
+```{dot}
+digraph {
+    spawn -> dam_passage
+    dam_passage -> downstream
+    downstream -> ocean
+    ocean -> jack
+    ocean -> adult
+    jack -> harvest
+    adult -> harvest
+    harvest -> transport
+    transport -> spawn
+}
+```
+
+
+
+
+# Results
+
+# Discussion
+
+# References
+
+
+
