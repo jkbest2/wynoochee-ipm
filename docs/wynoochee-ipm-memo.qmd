@@ -1,17 +1,46 @@
 ---
-title: An integrated population model for Upper Wynoochee Coho using limited data
-author: John Best
+title: Constraining feasible rates of downstream dam passage survival for juvenile coho (*Oncorhynchus kisutch*) through the Wynoochee Dam
+author:
+  name: John Best
+  affiliation: Quantitative Synthesis and Reporting Unit, Fish Science Division, WDFW
+abstract: |
+  The Wynoochee Dam impedes anadromous fish passage. A trap-and-haul program provides upstream passage to spawning adults. Downstream passage is volitional, and the powerhouse is shut down seasonally to allow for passage. However, there are currently no estimates of the effect of this volitional downstream passage on coho. An integrated population model is used to model the coho lifecycle. Data from a nearby, similar watershed is used to inform harvest rates and smolt-to-adult survival rates, which are used to approximate smolt abundances. Smolt abundance is adjusted based on a range of dam passage survival rates. The population productivity parameters are compared to the results of a meta-analysis of similar watersheds, and indicate that dam passage survival is likely to be greater than 40% and that the upper Wynoochee is a productive watershed for juvenile coho.
+bibliography: wynoochee-ipm.bib
+format:
+    docx:
+        reference-doc: templates/wdfw_report.dotx
 ---
 
-# Abstract
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+library(tidyverse)      # Data manipulation
+library(readxl)         # Read Excel files
+library(posterior)      # Process posterior samples
+library(distributional) # Specify distributions
+library(ggdist)         # Plot distributions (analytic or samples)
+
+knitr::opts_chunk$set(echo = FALSE, dpi = 300)
+## Adult trap-and-transport data from the Wynoochee
+wyn_trap <- read_rds("../data/wyn_trap.rds")
+## Adult ocean survival and harvest data from Bingham Creek
+bing_harvest <- read_rds("../data/bing_harvest.rds")
+## Data used to fit model. Imported to plot smolt abundance under different dam
+## passage survival scenarios.
+wyn_dfs <- read_rds("../data/wyn_dfs.rds")
+## Read in the posterior distributions from each dam passage survival scenario
+wyn_post <- map(paste0("ds", seq(20, 100, 20)),
+                \(dir) read_rds(file.path("..", "data", dir, "wyn_post.rds")))
+```
 
 # Background
 
-The Wynoochee River is a tributary of the Chehalis River in western Washington state, with headwaters in the Olympic Mountains (@fig-che-map). The Wynoochee Dam was constructed at river kilometer 84 (river mile 52) and completed in 1972, forming the Wynoochee Reservoir. A power house with 12.8 MW generating capacity was brought online in 1994. The dam is 53 m (175 ft) tall and is a complete barrier to upstream fish passage. The Federal Energy Regulatory Commission (FERC) license these facilities are operated under requires upstream pasage to be provided for anadromous fish species. A barrier dam 3.2 km (2 mi) downstream of the Wynoochee Dam directs fish into holding ponds where they can be transferred to trucks that transport them for release upstream of the Wynoochee Reservoir.
+The Wynoochee River is a tributary of the Chehalis River in western Washington state, with headwaters in the Olympic Mountains (@fig-che-map). The Wynoochee Dam was constructed at river kilometer 84 (river mile 52) and completed in 1972, forming the Wynoochee Lake as its reservoir. A power house with 12.8 kW generating capacity was brought online in 1994. The dam is 53 m (175 ft) tall and is a complete barrier to upstream fish passage. The Federal Energy Regulatory Commission (FERC) license these facilities are operated under requires upstream passage to be provided for anadromous fish species. A barrier dam 3.2 km (2 mi) downstream of the Wynoochee Dam directs fish into holding ponds where they can be transferred to trucks that transport them for release upstream of the Wynoochee Reservoir.
 
 ![A map of the lower Chehalis River and select tributaries, including the Wynoochee River, Satsop River, and Bingham Creek. Wynoochee Dam and Wynoochee Lake are also labeled, along with the Bingham Hatchery](figs/che-map.png){#fig-che-map}
 
-Downstream passage of outmigrating juvenile fish is volitional, and provided by shutting down the turbine for XX days during peak outmigration season. Volitional downstream migration means that smolt abundance is not observed, and the effectiveness of passage through the disengaged turbine and any associated mortality is unknown. Dam passage mortality cannot be directly estimated without observations of smolt abundance, but it is possible to constrain the possible range of mortality rates by comparing the overall productivity that would be required to produce the number of adults that are observed at a given dam passage survival rate. For example, if dam passage survival is 50%, twice as many smolts would be required to produce a given number of adults than if dam passage survival was 100%. Coho salmon (*Oncorhynchus kisutch*) are the subject of this study, though it could be extended to other species such as steelhead (*O. mykiss*) given the appropriate data sets.
+Downstream passage of outmigrating juvenile fish is volitional, and provided by shutting down the turbine for 77 days during the spring outmigration season^[https://www.mytpu.org/community-environment/fish-wildlife-environment/wynoochee-river-project/ accessed October 26, 2023]. Volitional downstream migration means that smolt abundance is not observed, and the effectiveness of passage through the disengaged turbine and any associated mortality is unknown. Dam passage mortality cannot be directly estimated without observations of smolt abundance, but it is possible to constrain the possible range of mortality rates by comparing the overall productivity that would be required to produce the number of adults that are observed at a given dam passage survival rate. For example, if dam passage survival is 50%, twice as many smolts would be required to produce a given number of adults than if dam passage survival was 100%. This study focuses on effects on the population dynamics of coho salmon (*Oncorhynchus kisutch*).
 
 The approach here uses an integrated population model (IPM) that models density-dependent smolt production by spawners. These smolts migrate through the dam with a chosen survival rate. After this they complete their migration to the ocean, where they are subject to additional mortality. They can then return as jacks (2 year old fish) or as adults (3 year old fish). These individuals are subject to harvest until they return to the upstream fish passage facility, where they are transported above the dam and produce the next generation of smolts (@fig-ipm-flowchart).
 
@@ -29,64 +58,252 @@ flowchart LR
     %%H-. Strays .->S
 ```
 
-Because direct observations from the Wynoochee River are sparse, data from nearby, similar watersheds is incorporated into this study. In particular, ocean survival and harvest rates from the wild Coho population in Bingham Creek. Fish that originate in Bingham Creek are subject to similar distances and conditions during downstream migration, in the ocean, and on their return, including harvest (@fig-che-map).
+Because direct observations from the Wynoochee River are sparse, data from nearby, similar watersheds is incorporated into this study. In particular, ocean survival and harvest rates from the wild coho population in Bingham Creek are used to fill in data gaps. Fish that originate in Bingham Creek must travel similar distances and encounter similar conditions during downstream migration, in the ocean, and on their return, including harvest (@fig-che-map).
 
-The @BarrowmanEtAl2003 meta-analysis estimated smolt productivity parameters across a number of streams in the Pacific Northwest, including Bingham Creek. These estimates were combined into a probability distribution that characterized the values these parameters were likely to take among watersheds. This distribution provides both a source of prior information for our Bayesian analysis and a basis for comparison with the smolt productivity values likely to occur under different dam passage survival scenarios. If a particular value of dam passage survival requires productivity parameters that are in low-probability regions of the meta-distribution we can take that as evidence against that value of dam passage survival.
+The @BarrowmanEtAl2003 meta-analysis provides estimates of smolt productivity parameters across a number of streams in the Pacific Northwest, including Bingham Creek. These estimates were combined into a meta-distribution that characterized the values these parameters were likely to take among watersheds. This distribution provides both a source of prior information for our Bayesian analysis and a basis for comparison with the smolt productivity values likely to occur under different dam passage survival scenarios. If a particular value of dam passage survival requires productivity parameters that are in low-probability regions of the meta-distribution we can take that as evidence against that value of dam passage survival.
 
 # Methods
 
-A series of five models were fit, assuming 20%, 40%, 60%, 80%, or 100% dam passage survival. The models were otherwise specified identically.
+In order to fit the IPM, four types of data are required: spawner abundance, spawner age composition, smolt abundance, and harvest rate. Spawner abundance is available directly from transport records from 1969 to 2022 (@fig-adult-counts). Because there are no harvest estimates for Bingham Creek before 1983, adult counts from this early period were not used. Adult numbers from 2020 to 2022 were used to back-calculate numbers of smolts in previous years (described below) but were not able to be included in the IPM because smolt numbers could not be calculated for these years without adult return numbers for 2023 and beyond.
 
-The `salmonIPM` [@BuhleScheuerell2023] model was used to specify the IPM, interfaced through the R programming language [@RCoreTeam2023]. The model was fit using Markov Chain Monte Carl with the No-U-Turn Sampler [@HoffmanGelman2014].
-
-## Available data
-
-In order to fit the IPM, four pieces of data were required: spawner abundance, smolt abundance, spawner age structure, and harvest rate. Spawner abundance is available directly from transport records, and 
-
-Relatively little data is available for coho in the Upper Wynoochee basin. Direct observations of the number of adults transported upstream from the barrier dam are available, as are limited age composition observations (i.e. jack vs adult proporations). These data are available from XXXX-XXXX. Because downstream passage through the Wynoochee Dam is directly through the turbine, there are no direct observations of smolt abundance
-
-The goal is to look at the effects of dam pasage survival on estimates of productivity and capacity. To do this, we use a two-stage integrated population model. Adult-to-smolt production follows a Beverton-Holt production function that depends on intrinsic productivity $r$, maximum smolt production per kilometer of habitat $M_{max}$, and habitat length $A$
-
-$$M_{t} = \frac{rS_{t}}{1 + S_{t}/(A M_{max})}.$$
-
-Smolt-to-adult survival is not density dependent. The final piece of information required for the model is harvest rate.
-
-As usual for coho, fish are assumed to smolt roughly one year after they are spawned, and then return at age 2 (as jacks) or age 3.
-
-data required:
-- smolt abundance
-- harvest rate
-- adult age structure
-- number of adults
-
-Only have direct observations of numbers of adults, as these are trapped and hauled above the Wynoochee Dam. We could infer the population productivity parameters using these data in a single-stage IPM, but this does not allow us to consider the effect of imperfect survival when juveniles are migrating downstream through the turbine. To account for this, we used a two-stage IPM. This still required that we have some information on harvest rates and smolt-to-adult survival. To 
-
-
-
-20km of habitat assumed, based on the stream length available above the barrier dam [FIGURE XX]. This assumes that rearing habitat, rather than spawning habitat, is limiting and so areas downstream of the reservoir inlet are usable. 
-
-```{dot}
-digraph {
-    spawn -> dam_passage
-    dam_passage -> downstream
-    downstream -> ocean
-    ocean -> jack
-    ocean -> adult
-    jack -> harvest
-    adult -> harvest
-    harvest -> transport
-    transport -> spawn
-}
+```{r}
+#| label: fig-adult-counts
+#| fig-cap: Adult coho transported to the upper Wynoochee River. The highlighted region indicates the observations used to fit the IPM. Observations outside of this range were dropped due to missing harvest estimates (1969-1982) or inability to back-calculate smolt numbers (2021-2022).
+#| dpi: 300
+#| fig-height: 3
+adult_counts <- wyn_trap |> # read_rds("../data/wyn_trap.rds") |>
+  filter(species == "coho") |>
+ggplot(aes(x = year, y = count)) +
+  annotate("rect",
+           xmin = 1982.5, xmax = 2019.5,
+           ymin = 0, ymax = Inf,
+           alpha = 0.2, fill = "#92D4DA") +
+  geom_point() +
+  geom_line() +
+  scale_y_continuous(limits = c(0, NA),
+                     expand = expansion(mult = c(0, 0.05))) +
+  labs(x = "Year", y = "Adults transported upstream") +
+  theme_minimal()
+adult_counts
 ```
 
+```{r}
+agecomp_df <-
+  read_xlsx("../rawdata/2016-2022WynoocheeCohoAdultNumbers.xlsx") |>
+  select(year = Coho,
+         Adult = Above,
+         Jack = Jacks) |>
+  filter(year != 2021) |>
+  mutate(Total = Adult + Jack,
+         pjack = scales::percent_format(0.1)(Jack / Total))
+```
 
+Smolt abundance is not directly observed in the Wynoochee River, but it is possible to back-calculate a reasonable approximation if smolt-to-adult survival (SAR) is assumed to be comparable between wild fish returning to Bingham Creek and wild fish returning to the upper Wynoochee River (@fig-bingham-plots-1). The age composition of the returning spawners (i.e. proportion of jacks vs. adults) is then used to assign smolts to a brood year. Reliable age composition in the Upper Wynoochee are available for 2016-2022 (except 2021, @fig-age-comp). For years without age composition observations it was assumed that the proportion of jackes was the overall proportion observed for 2016-2020 and 2022, `r scales::label_percent(0.1)(sum(agecomp_df$Jack) / sum(agecomp_df$Total))`. The number of smolts in year $M_{t}$ was calculated as
+$$M_t =
+\underbrace{\frac{j_{t+2} S_{t + 2}}{\phi_{t + 3}}}_{\text{Jack contribution}} +
+\underbrace{\frac{(1 - j_{t + 3}) S_{t + 3}}{\phi_{t + 3}}}_{\text{Adult contribution}}$$
+where $S_{t}$ is the number of spawners, $j_{t}$ is the proportion of jacks, and $\phi_{t}$ is the SAR in year $t$. It is assumed that the SAR is shared within a brood year, so jacks experience the same survival as adults returning the subsequent year.
 
+```{r}
+#| fig-cap: Age composition of spawners returning to the upper Wynoochee River. Observations from 2021 are not considered reliable and are not included here. Each bar is labeled with the proportion of jacks. The highlighted years (2016-2019) were included as age composition observations in the IPM with sample sizes divided in half to allow for additional uncertainty.
+#| label: fig-age-comp
+#| fig-height: 3
+agecomp_plot <- agecomp_df |>
+  select(-pjack, -Total) |>
+  pivot_longer(c(Adult, Jack),
+               names_to = "age",
+               names_transform = \(n) factor(n, levels = c("Jack", "Adult")),
+               values_to = "count") |>
+  ggplot(aes(x = year, y = count, fill = age)) +
+  annotate("rect",
+           xmin = 2015.5, xmax = 2019.5,
+           ymin = 0, ymax = Inf,
+           alpha = 0.2, fill = "#92D4DA") +
+  geom_col() +
+  geom_label(aes(x = year, y = Total, label = pjack),
+             data = agecomp_df,
+             nudge_y = 125,
+             inherit.aes = FALSE) +
+  scale_x_continuous(breaks = 2016:2022) +
+  scale_y_continuous(limits = c(0, NA),
+                     expand = expansion(mult = c(0, 0.05))) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(x = "Year", y = "Number of fish", fill = "Age") +
+  theme_minimal() +
+  theme()
+agecomp_plot
+```
+
+These values of $M_{t}$ assume 100% survival through the dam. Each of the five scenarios assumed a fixed value $p$ of 20%, 40%, 60%, 80%, or 100% dam passage survival, so that the number of "observed" smolts used for the IPM each year $\tilde{M}_{t}$ was
+$$\tilde{M}_{t} = M_{t} / p.$$
+The resulting time series (@fig-smolt-abundance) clearly shows the multiplicative effect of decreasing dam survival on implied smolt abundance.
+
+```{r}
+#| fig-cap: Approximated smolt abundance per kilometer of habitat from 1983-2019 at different dam passage survival rates.
+#| fig-height: 4
+#| label: fig-smolt-abundance
+#| dpi: 300
+ps <- paste0(seq(20, 100, 20), "%")
+imap(wyn_dfs, \(df, idx) mutate(df, p = ps[idx])) |>
+  bind_rows() |>
+  mutate(p = factor(p, levels = ps),
+         M_obs = M_obs / A) |>
+  filter(!is.na(M_obs)) |>
+  ggplot(aes(x = year, y = M_obs, color = p)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, NA),
+                     expand = expansion(mult = c(0, 0.05)),
+                     labels = scales::comma) +
+  labs(x = "Year",
+       y = "Smolts per km habitat",
+       color = "Dam\nsurvival") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Age composition is estimated as part of the IPM, and observations of numbers of fish in each age class can be provided. For the years with observations the sample sizes were halved. There was no documentation of the aging procedure used, so this sample size reduction adds uncertainty. In years with no observations 2.5 jacks and 44.4 adults were included as observations. This is the mean number of fish of each age class observed each year, reduced be a factor of 20 to account for the additional uncertainty of this imputation. An informative $\operatorname{Dirichlet}(2, 44.5)$ prior on age composition was used. This prior assumes a probability of 95% that jacks are less than 10% of spawners each year.
+
+Harvest rates from the wild coho population in Bingham Creek were assumed comparable to the upper Wynoochee population (@fig-bingham-plots-2).
+
+```{r}
+##| dpi: 300
+##| fig-height: 6
+##| fig-cap: Data from the Bingham Creek wild coho population used to inform the IPM. These are assumed to be representative of the conditions experienced by wild coho from the upper Wynoochee.
+##| fig-subcap:
+##|   - "Smolt-to-adult ratio (SAR) for wild coho from 1983-2019."
+##|   - "Harvest rate of wild coho returning to Bingham Creek."
+##| label: fig-bingham-rates
+bing_sar <- bing_harvest |> 
+  filter(brood_year <= 2019) |>
+  ggplot(aes(x = return_year, y = survival_escapement)) +
+  annotate("rect",
+           xmin = 1982.5, xmax = 2019.5,
+           ymin = 0, ymax = Inf,
+           alpha = 0, fill = "#92D4DA") +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = seq(1950, 2050, 5), minor_breaks = NULL) +
+  scale_y_continuous(labels = scales::percent,
+                     limits = c(0, NA),
+                     expand = expansion(mult = c(0, 0.02))) +
+  labs(x = "Return year", y = "Smolt-to-adult survival")
+bing_har <- bing_harvest |>
+  filter(brood_year <= 2019) |>
+  ggplot(aes(x = return_year, y = harvest_total)) +
+  annotate("rect",
+           xmin = 1982.5, xmax = 2019.5,
+           ymin = 0, ymax = Inf,
+           alpha = 0.2, fill = "#92D4DA") +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = seq(1950, 2050, 5), minor_breaks = NULL) +
+  scale_y_continuous(labels = scales::percent,
+                     limits = c(0, NA),
+                     expand = expansion(mult = c(0, 0.02))) +
+  labs(x = "Return year", y = "Harvest rate")
+## bing_sar / bing_har + plot_annotation(tag_levels = "a") & theme_minimal()
+```
+
+```{r}
+#| label: fig-bingham-plots
+#| fig-cap: Data from the Bingham Creek wild coho population used to inform the IPM. These are assumed to be representative of the conditions experienced by wild coho from the upper Wynoochee.
+#| fig-subcap:
+#|   - Smolt-to-adult ratio (SAR) for wild coho from 1983-2019.
+#|   - Harvest rate of wild coho returning to Bingham Creek. The highlighted values (1983-2019) were used as input to the IPM.
+#| layout-ncol: 1
+#| fig-height: 2.5 
+bing_sar + theme_minimal()
+bing_har + theme_minimal()
+```
+
+Habitat availability in the upper Wynoochee was quantified as linear distance above the Wynoochee Dam and below obstructions identified in the Statewide Washington Integrated Fish Distribution database, including the Wynoochee Reservoir (@fig-habitat). The reservoir was included as habitat because density dependence was assumed to occur due to limitations on rearing rather than nest sites. There are 23 km (14.3 mi) of habitat available above the Wynoochee Dam.
+
+![Habitat available for coho above the Wynoochee Dam is indicated by light blue, with further tributaries shown in dark blue.](figs/upper_wyn_hab.png){#fig-habitat}
+
+The meta-distributions from @BarrowmanEtAl2003 were used as prior distributions for the smolt production and capacity parameters ($\alpha$ and $M_{max}$ respectively) in the Beverton-Holt equation that models the number of smolts produced by a given number of spawners. The meta-distributions of $alpha$ and $M_{max}$ in @BarrowmanEtAl2003 were parameterized in terms of female smolts and spawners. These were adjusted assuming a 50% of smolts were female and 45% of spawners were female. Smolt capacity was also parameterized in terms of kilometers of habitat, so no adjustment was needed for habitat scale. These distributions also serve as a baseline to compare the dam passage survival scenarios. An additional prior was specified to decrease the observation uncertainty of the number of spawners, given that they are observed during transportation.
+
+The `salmonIPM` [@BuhleScheuerell2023] package was used to specify the IPM, interfaced through the R programming language [@RCoreTeam2023]. The model was fit using Markov Chain Monte Carlo with the No-U-Turn Sampler [@HoffmanGelman2014].
 
 # Results
 
+```{r}
+ps <- seq(0.2, 1, 0.2)
+post_df <- tibble(
+  p = ps,
+  alpha = map_vec(wyn_post, pluck, "alpha"),
+  mmax = map_vec(wyn_post, pluck, "Mmax")
+)
+prior_df <- tibble(
+  alpha = dist_lognormal(4.27 + log(0.9), sqrt(0.18^2 + 0.43^2)),
+  mmax = dist_lognormal(6.58 + log(2), sqrt(0.18^2 + 0.64^2)),
+)
+prior_df2 <- tibble(
+  p = ps,
+  alpha = prior_df$alpha,
+  mmax = prior_df$mmax
+)
+```
+
+The posterior distributions of $\alpha$ for each dam passage survival scenario are shown in @fig-alpha-post. There is a clear increase in $\alpha$ as dam passage survival decreases. The posterior distribution of $\alpha$ at dam passage survival rates of 60% and greater show substantial overlap with the @BarrowmanEtAl2003 meta-distribution, with values generally on the upper end of those expected in watersheds in the Pacific Northwest.
+
+```{r}
+#| fig-cap: Posterior distributions of the number of smolts produced per spawner at low density ($\alpha$) for each dam passage survival scenario. The point at the bottom of each density denotes the posterior median. The thicker interval is a 66% posterior credible interval and the thinner interval is a 95% posterior credible interval. The prior distribution from @BarrowmanEtAl2003 is shown in gray. Note that the right tail of the posterior distribution of $\alpha$ at 20% dam passage survival is not shown in its entirety.
+#| dpi: 300
+#| label: fig-alpha-post
+post_df |>
+  select(p, alpha) |>
+  mutate(prior = prior_df$alpha) |>
+  ggplot() +
+  stat_slab(aes(xdist = prior, y = p), alpha = 0.5, color = "gray") +
+  stat_slabinterval(aes(xdist = alpha, y = p, fill = factor(p)),
+                    alpha = 0.5,
+                    interval_alpha = 1,
+                    point_alpha = 1) +
+  scale_y_continuous(breaks = seq(0.2, 1, 0.2), labels = scales::percent) +
+  scale_thickness_shared() +
+  coord_cartesian(xlim = c(0, 503), ylim = c(0.19, NA), expand = FALSE) +
+  guides(fill = "none") +
+  labs(x = "Smolts per spawner at low density",
+       y = "Dam passage survival") +
+  theme_minimal()
+```
+
+The posterior distributions of smolt capacity ($M_{max}$) are shown in @fig-mmax-post. Again there is a clear increase in the expected capacity as dam passage survival decreases, and substantial overlap between the @BarrowmanEtAl2003 meta-distribution when dam passage survival is 60% or greater. Even at 100% dam passage survival the smolt capacity is on the upper end of that expected under the @BarrowmanEtAl2003 meta-distribution.
+
+```{r}
+#| fig-cap: Posterior distributions of the smolt capacity per kilometer of habitat ($M_{max}$) for each dam passage survival scenario. The points and intervals represent the median, the 66%, and the 95% credible intervals of each posterior. The @BarrowmanEtAl2003 meta-distribution is shown in gray. Note that the right tails of the posterior distributions for 40% and 20% dam passage survival are not shown in their entirety.
+#| label: fig-mmax-post
+#| dpi: 300
+post_df |>
+  select(p, mmax) |>
+  mutate(prior = prior_df$mmax) |>
+  ggplot() +
+  stat_slab(aes(xdist = prior, y = p), alpha = 0.5, color = "gray") +
+  stat_slabinterval(aes(xdist = mmax, y = p, fill = factor(p)),
+                    alpha = 0.5,
+                    interval_alpha = 1,
+                    point_alpha = 1) +
+  scale_x_continuous(breaks = seq(0, 100e3, 2e3),
+                     minor_breaks = seq(0, 100e3, 1e3)) +
+  scale_y_continuous(breaks = seq(0.2, 1, 0.2), labels = scales::percent) +
+  scale_thickness_shared() +
+  coord_cartesian(xlim = c(0, 10e3 + 200), ylim = c(0.19, NA), expand = FALSE) +
+  guides(fill = "none") +
+  labs(x = "Smolt capacity per kilometer of habitat",
+       y = "Dam passage survival") +
+  theme_minimal()
+```
+
 # Discussion
 
+This model does not claim to estimate dam passage survival directly. It does attempt to highlight values of dam passage survival that are plausible given the information available. That said, the disagreement between the posterior distributions of $\alpha$ and $M_{max}$ and the corresponding meta-distributions from @BarrowmanEtAl2003 seen in @fig-alpha-post and @fig-mmax-post provide evidence that it is unlikely that dam passage survival rates are 40% or lower. High survival rates are somewhat unsurprising as the power plant is not operating during much of the downstream migration, providing volitional passage with lower risk of mortality due to barotrauma or other injury.
+
+The scenarios presented here assume that dam passge survival is constant through the years. This assumption may not hold if, for example, conditions induce juvenile coho to outmigrate before the power plant has been shut down for the season. Migration timing changes driven by climate change should also be considered when choosing the period that the power plant is taken offline. There is also insufficient data to determine whether the timing of the power plant shutdown has influenced the life history and outmigration timing of juvenile coho in the upper Wynoochee. Obviously continued upstream transport of spawning fish is vital to maintaining this population.
+
+Estimates of smolt productivity and capacity ($\alpha$ and $M_{max}$ respectively) assuming 100% dam passage survival are on the higher end of the @BarrowmanEtAl2003 meta-distribution. This is evidence that the upper Wynoochee is a productive system. Wynoochee Lake may be providing high quality rearing habitat for juvenile coho. This also supports the inclusion of Wynoochee Lake as habitat and the assumption that density-dependence occurs while rearing rather than during earlier life stages.
+
+The current study provides evidence of a lower limit on feasible values for dam passage survival for juvenile coho. Estimating dam passage survival more directly will require new studies. One approach would capture juveniles above the Wynoochee Dam and mark them. Some of these fish would be released above some ways above this first trap while others would be released below the dam. A second trap below the Wynoochee Dam would recapture both groups of fish. This would allow for direct estimates of dam passage survival. It would also be possible to use this to estimate smolt abundance. If sufficient numbers of fish were marked could also inform ocean survival and harvest for the Wynoochee rather than using observations from Bingham Creek.
+
 # References
-
-
 
